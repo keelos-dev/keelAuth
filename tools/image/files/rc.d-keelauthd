@@ -1,0 +1,64 @@
+#!/bin/sh
+# keelauthd: keelAuth's management daemon (docs/02). It writes the configuration of Kanidm and
+# FreeRADIUS and starts them itself (they are not enabled in rc.conf), so this script stops them
+# after keelauthd at shutdown: kanidmd's database must not be cut off.
+#
+# PROVIDE: keelauthd
+# REQUIRE: keelauth NETWORKING LOGIN
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="keelauthd"
+rcvar="keelauthd_enable"
+start_cmd="keelauthd_start"
+stop_cmd="keelauthd_stop"
+status_cmd="keelauthd_status"
+extra_commands="status"
+
+keelauthd=/usr/local/sbin/keelauthd
+# daemon(8) supervises keelauthd (restarts it if it dies); this is the supervisor's pid.
+supervisor_pid=/var/run/keelauthd-daemon.pid
+
+keelauthd_start()
+{
+	[ -x $keelauthd ] || return 0
+	if pgrep -F $supervisor_pid >/dev/null 2>&1; then
+		echo "keelauthd is already running."
+		return 0
+	fi
+	daemon -f -r -R 5 -P $supervisor_pid -t keelauthd -o /var/log/keelauthd.log $keelauthd serve
+	echo "Started keelauthd."
+}
+
+keelauthd_stop()
+{
+	local i
+	if pgrep -F $supervisor_pid >/dev/null 2>&1; then
+		pkill -F $supervisor_pid
+		i=0
+		while pgrep -F $supervisor_pid >/dev/null 2>&1 && [ $i -lt 20 ]; do
+			sleep 0.5; i=$((i + 1))
+		done
+		echo "Stopped keelauthd."
+	fi
+	rm -f $supervisor_pid
+	# what keelauthd started with "service … onestart"
+	service radiusd onestatus >/dev/null 2>&1 && service radiusd onestop
+	service kanidmd onestatus >/dev/null 2>&1 && service kanidmd onestop
+	return 0
+}
+
+keelauthd_status()
+{
+	if pgrep -F $supervisor_pid >/dev/null 2>&1; then
+		echo "keelauthd is running as pid $(pgrep -P $(cat $supervisor_pid))."
+	else
+		echo "keelauthd is not running."
+		return 1
+	fi
+}
+
+load_rc_config $name
+: ${keelauthd_enable:="NO"}
+run_rc_command "$1"

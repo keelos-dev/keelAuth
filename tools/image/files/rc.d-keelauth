@@ -1,0 +1,173 @@
+#!/bin/sh
+# keelAuth: what the system needs before the network and the services (docs/03 section 2-3).
+#
+# - limits ZFS's cache (a 512 MB guest);
+# - the data disk: imports the pool "kadata" (or makes it on an empty disk the first time) and
+#   mounts it on /data;
+# - the seed disk from keel: the internal link (by MAC) and the LAN's fixed address, written to
+#   /etc/rc.conf.d before netif reads it.
+#
+# PROVIDE: keelauth
+# REQUIRE: FILESYSTEMS
+# BEFORE: netif hostname keelauthd
+# KEYWORD: nojail
+
+. /etc/rc.subr
+
+name="keelauth"
+rcvar="keelauth_enable"
+start_cmd="keelauth_start"
+stop_cmd=":"
+
+DATAPOOL=kadata
+SYSPOOL=kasys
+
+# syslogd is not up yet this early: the lines go to the console and to /var/log/keelauth.log
+say() { echo "keelauth: $*"; echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >> /var/log/keelauth.log; }
+
+# ZFS's cache takes all memory but 1 GB by default. Here: a sixth of the memory, at least 64 MB
+# (keelauth_arc_max in rc.conf, bytes, to choose).
+keelauth_arc()
+{
+	local mem max
+	mem=$(sysctl -n hw.physmem)
+	max=${keelauth_arc_max:-$((mem / 6))}
+	[ "$max" -lt 67108864 ] && max=67108864
+	sysctl vfs.zfs.arc.max=$max >/dev/null && say "ZFS cache limited to $((max / 1048576)) MB."
+}
+
+# The disks that are neither the system disk (it has a partition table) nor CD drives.
+keelauth_plain_disks()
+{
+	local d
+	for d in $(sysctl -n kern.disks); do
+		case $d in cd*) continue ;; esac
+		gpart show "$d" >/dev/null 2>&1 && continue
+		echo "$d"
+	done
+}
+
+keelauth_data()
+{
+	local d size best bestsize
+	if zpool list -H -o name $DATAPOOL >/dev/null 2>&1 || \
+	    zpool import -N -o cachefile=none $DATAPOOL >/dev/null 2>&1 || \
+	    zpool import -N -f -o cachefile=none $DATAPOOL >/dev/null 2>&1; then
+		zfs mount $DATAPOOL 2>/dev/null
+		say "data pool $DATAPOOL on /data."
+		return 0
+	fi
+	# The first boot: the largest disk whose first MiB is all zero (keel's new disk). A disk
+	# with a ZFS label, a seed or anything else on it is never taken.
+	best=""; bestsize=0
+	for d in $(keelauth_plain_disks); do
+		cmp -s -n 1048576 /dev/$d /dev/zero || continue
+		size=$(diskinfo /dev/$d | awk '{print $3}')
+		if [ "$size" -gt "$bestsize" ]; then
+			best=$d; bestsize=$size
+		fi
+	done
+	if [ -n "$best" ]; then
+		# recordsize 64K: Kanidm's pages on ZFS (keelauthd writes db_fs_type = "zfs")
+		if zpool create -o cachefile=none -O compression=lz4 -O atime=off -O recordsize=64K \
+		    -O mountpoint=/data $DATAPOOL $best; then
+			say "made the data pool $DATAPOOL on $best ($((bestsize / 1048576)) MB), mounted on /data."
+			return 0
+		fi
+		say "could not make the data pool on $best."
+	fi
+	# No data disk: /data on the system pool, outside the boot environments. It works, but a new
+	# system disk (a new package) starts empty: only for tests.
+	if ! zfs list -H $SYSPOOL/data >/dev/null 2>&1; then
+		zfs create -o mountpoint=/data $SYSPOOL/data
+	fi
+	zfs mount $SYSPOOL/data 2>/dev/null
+	say "WARNING: no data disk; the accounts are on the system disk ($SYSPOOL/data)."
+}
+
+# Reads the seed's JSON on stdin and prints shell assignments of the checked values.
+keelauth_seed_parse()
+{
+	/usr/libexec/flua -e '
+local ucl = require("ucl")
+local p = ucl.parser()
+local ok = p:parse_string(io.read("a") or "")
+if not ok then os.exit(1) end
+local s = p:get_object()
+if type(s) ~= "table" or s.keelauth_seed ~= 1 then os.exit(1) end
+local function ip(v) return type(v) == "string" and v:match("^%d+%.%d+%.%d+%.%d+$") ~= nil end
+local function cidr(v) return type(v) == "string" and v:match("^%d+%.%d+%.%d+%.%d+/%d+$") ~= nil end
+local function out(k, v) print(k .. "=\"" .. v .. "\"") end
+local i = s.internal
+if type(i) == "table" and type(i.mac) == "string" and i.mac:lower():match("^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") and cidr(i.address) then
+	out("int_mac", i.mac:lower()); out("int_addr", i.address)
+end
+local l = s.lan
+if type(l) == "table" and l.mode == "static" and cidr(l.address) then
+	out("lan_addr", l.address)
+	if ip(l.gateway) then out("lan_gw", l.gateway) end
+	local dns = {}
+	if type(l.dns) == "table" then
+		for _, d in ipairs(l.dns) do if ip(d) and #dns < 3 then dns[#dns + 1] = d end end
+	end
+	out("lan_dns", table.concat(dns, " "))
+end
+'
+}
+
+keelauth_seed()
+{
+	local d head vars int_mac int_addr lan_addr lan_gw lan_dns ifs nic lan_if mac x seeded=""
+	rm -f /etc/rc.conf.d/netif /etc/rc.conf.d/dhclient /etc/rc.conf.d/routing
+	for d in $(keelauth_plain_disks); do
+		head=$(dd if=/dev/$d bs=4096 count=1 2>/dev/null | tr -d '\000')
+		case $head in *keelauth_seed*) ;; *) continue ;; esac
+		vars=$(echo "$head" | keelauth_seed_parse) || { say "seed on $d is not valid JSON with keelauth_seed 1."; continue; }
+		eval "$vars"
+		say "seed on $d."
+		seeded=1
+		break
+	done
+	[ -n "$seeded" ] || say "no seed disk: this keelAuth is NOT managed by keel (standalone). LAN by DHCP; manage it on its own web page (https://<its address>/); first admin: keelauthd admin NAME on this console."
+	ifs=$(ifconfig -l ether)
+	lan_if=""
+	mkdir -p /etc/rc.conf.d
+	for nic in $ifs; do
+		mac=$(ifconfig $nic ether | awk '/ether/ {print $2}')
+		if [ -n "$int_mac" ] && [ "$mac" = "$int_mac" ]; then
+			# keel's internal link: a fixed address, no DHCP (keelNAS docs/04 section 11).
+			echo "ifconfig_$nic=\"inet $int_addr\"" >> /etc/rc.conf.d/netif
+			say "internal link: $nic $int_addr."
+		elif [ -z "$lan_if" ]; then
+			lan_if=$nic
+		fi
+	done
+	if [ -n "$lan_addr" ] && [ -n "$lan_if" ]; then
+		echo "ifconfig_$lan_if=\"inet $lan_addr\"" >> /etc/rc.conf.d/netif
+		[ -n "$lan_gw" ] && echo "defaultrouter=\"$lan_gw\"" > /etc/rc.conf.d/routing
+		if [ -n "$lan_dns" ]; then
+			{ echo "# rc.d/keelauth: from keel's seed"; for x in $lan_dns; do echo "nameserver $x"; done; } > /etc/resolv.conf
+		fi
+		say "LAN: $lan_if $lan_addr${lan_gw:+ via $lan_gw} (fixed, from the seed)."
+	elif [ -n "$lan_if" ]; then
+		[ "$lan_if" != vtnet0 ] && echo "ifconfig_$lan_if=\"DHCP\"" >> /etc/rc.conf.d/netif
+		# a resolv.conf this script wrote for a fixed address is no use with DHCP
+		head -1 /etc/resolv.conf 2>/dev/null | grep -q '^# rc.d/keelauth' && rm -f /etc/resolv.conf
+		say "LAN: $lan_if DHCP."
+	fi
+	# devd starts dhclient on every link-up with "service dhclient", which reads rc.conf and
+	# rc.conf.d/dhclient, not rc.conf.d/netif: without this it puts DHCP back on a fixed address.
+	[ -f /etc/rc.conf.d/netif ] && cp /etc/rc.conf.d/netif /etc/rc.conf.d/dhclient
+	return 0
+}
+
+keelauth_start()
+{
+	keelauth_arc
+	keelauth_data
+	keelauth_seed
+}
+
+load_rc_config $name
+: ${keelauth_enable:="YES"}
+run_rc_command "$1"

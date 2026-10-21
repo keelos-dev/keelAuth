@@ -20,7 +20,7 @@ function GroupForm({ group, users, onClose, onDone }) {
   const [desc, setDesc] = useState(group ? group.description : "");
   const [mem, setMem] = useState(group ? group.members : []);
   const save = async () => {
-    if (group) await api("PATCH", "v1/groups/" + enc(group.name), { description: desc, members: mem });
+    if (group) await api("PATCH", "v1/groups/" + enc(group.name), { description: desc, members: [...mem, ...(group.member_groups || [])] });
     else await api("POST", "v1/groups", { name: name.trim(), description: desc.trim(), members: mem });
     onDone();
   };
@@ -50,7 +50,7 @@ export function Groups() {
     <div class="table-wrap tall"><table class="data plain">
       <thead><tr><th>${t("groups.name")}</th><th>${t("groups.desc")}</th><th>${t("groups.members")}</th><th></th></tr></thead>
       <tbody>${gs.map((g) => html`<tr><td><b>${g.name}</b>${g.builtin ? html` <span class="badge">${t("groups.builtin")}</span>` : ""}</td>
-        <td>${g.builtin && !g.description ? t("groups.admindesc") : g.description}</td><td>${g.members.join(", ") || "–"}</td>
+        <td>${g.builtin && !g.description ? t("groups.admindesc") : g.description}</td><td>${g.members.join(", ") || ((g.member_groups || []).length ? "" : "–")}${(g.member_groups || []).map((n, i) => html`${g.members.length || i ? ", " : ""}${n} <span class="muted small">[${t("groups.group")}]</span>`)}</td>
         <td class="nowrap"><button class="btn" onClick=${() => setDlg({ kind: "edit", group: g })}>${t("edit")}</button>
           ${!g.builtin && html`<button class="btn danger" onClick=${() => del(g)}>${t("delete")}</button>`}</td></tr>`)}</tbody></table></div>
     <p class="muted small">${t("groups.note")}</p>

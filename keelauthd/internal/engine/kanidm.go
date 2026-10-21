@@ -453,13 +453,20 @@ func (k *Kanidm) CheckPassword(name, pw string) (bool, error) {
 
 // ---- groups ----
 
-func toGroup(e *entry) Group {
-	g := Group{Name: e.one("name"), Description: e.one("description"), Members: []string{}}
+// toGroup reads a group; members whose name is in groups (the engine's group names) are
+// member groups, the others users.
+func toGroup(e *entry, groups map[string]bool) Group {
+	g := Group{Name: e.one("name"), Description: e.one("description"), Members: []string{}, MemberGroups: []string{}}
 	g.GID, _ = strconv.Atoi(e.one("gidnumber"))
 	for _, m := range e.Attrs["member"] {
-		g.Members = append(g.Members, spnName(m))
+		if n := spnName(m); groups[n] {
+			g.MemberGroups = append(g.MemberGroups, n)
+		} else {
+			g.Members = append(g.Members, n)
+		}
 	}
 	sort.Strings(g.Members)
+	sort.Strings(g.MemberGroups)
 	return g
 }
 
@@ -468,10 +475,16 @@ func (k *Kanidm) Groups() ([]Group, error) {
 	if err := k.do("GET", "/v1/group", nil, &es); err != nil {
 		return nil, err
 	}
+	names := map[string]bool{}
+	for i := range es {
+		if !builtinGroup(&es[i]) {
+			names[es[i].one("name")] = true
+		}
+	}
 	out := []Group{}
 	for i := range es {
 		if !builtinGroup(&es[i]) {
-			out = append(out, toGroup(&es[i]))
+			out = append(out, toGroup(&es[i], names))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -486,7 +499,11 @@ func (k *Kanidm) Group(name string) (*Group, error) {
 	if e == nil || e.one("name") == "" || builtinGroup(e) {
 		return nil, NotFound("group", name)
 	}
-	g := toGroup(e)
+	own, err := k.ownGroups()
+	if err != nil {
+		return nil, err
+	}
+	g := toGroup(e, own)
 	return &g, nil
 }
 
@@ -540,7 +557,8 @@ var scopeRE = regexp.MustCompile(`^([^:]+):\s*\{(.*)\}$`)
 func toOAuth2(e *entry) OAuth2 {
 	c := OAuth2{Name: e.one("name"), DisplayName: e.one("displayname"), LandingURL: e.one("oauth2_rs_origin_landing"),
 		RedirectURLs: slices.Clone(e.Attrs["oauth2_rs_origin"]), ScopeMaps: map[string][]string{},
-		PKCE: e.one("oauth2_allow_insecure_client_disable_pkce") != "true", ShortName: e.one("oauth2_prefer_short_username") == "true"}
+		PKCE: e.one("oauth2_allow_insecure_client_disable_pkce") != "true", RS256: e.one("oauth2_jwt_legacy_crypto_enable") == "true",
+		ShortName: e.one("oauth2_prefer_short_username") == "true"}
 	if c.RedirectURLs == nil {
 		c.RedirectURLs = []string{}
 	}
@@ -597,53 +615,59 @@ func (k *Kanidm) CreateOAuth2(c OAuth2) error {
 			return fmt.Errorf("redirect URLs: %v", err)
 		}
 	}
-	if !c.PKCE {
-		v := false
-		if err := k.UpdateOAuth2(c.Name, nil, nil, nil, &v); err != nil {
+	if !c.PKCE || c.RS256 {
+		var pk, rs *bool
+		if !c.PKCE {
+			v := false
+			pk = &v
+		}
+		if c.RS256 {
+			v := true
+			rs = &v
+		}
+		if err := k.UpdateOAuth2(c.Name, nil, nil, nil, pk, rs); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (k *Kanidm) UpdateOAuth2(name string, display, landing *string, redirects []string, pkce *bool) error {
+func (k *Kanidm) UpdateOAuth2(name string, display, landing *string, redirects []string, pkce, rs256 *bool) error {
 	if _, err := k.OAuth2(name); err != nil {
 		return err
 	}
 	p := "/v1/oauth2/" + esc(name) + "/_attr/"
+	// Kanidm 1.11 answers PUT …/_attr/{displayname,oauth2_rs_origin_landing,oauth2_rs_origin}
+	// with 405: those go through the entry's PATCH in one call (an empty list removes the attribute)
+	attrs := map[string][]string{}
 	if display != nil {
-		if err := k.do("PUT", p+"displayname", []string{*display}, nil); err != nil {
-			return err
-		}
+		attrs["displayname"] = []string{*display}
 	}
 	if landing != nil {
-		if err := k.do("PUT", p+"oauth2_rs_origin_landing", []string{*landing}, nil); err != nil {
-			return err
-		}
+		attrs["oauth2_rs_origin_landing"] = []string{*landing}
 	}
 	if redirects != nil {
-		var err error
-		if len(redirects) == 0 {
-			if err = k.do("DELETE", p+"oauth2_rs_origin", nil, nil); errors.Is(err, ErrNotFound) {
-				err = nil
+		attrs["oauth2_rs_origin"] = append([]string{}, redirects...)
+	}
+	// pkce / rs256: setting is the entry PATCH too (PUT is a 405 in 1.11); clearing stays the DELETE
+	if pkce != nil {
+		if *pkce {
+			if err := k.do("DELETE", p+"oauth2_allow_insecure_client_disable_pkce", nil, nil); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
 			}
 		} else {
-			err = k.do("PUT", p+"oauth2_rs_origin", redirects, nil)
+			attrs["oauth2_allow_insecure_client_disable_pkce"] = []string{"true"}
 		}
-		if err != nil {
+	}
+	if rs256 != nil {
+		if *rs256 {
+			attrs["oauth2_jwt_legacy_crypto_enable"] = []string{"true"}
+		} else if err := k.do("DELETE", p+"oauth2_jwt_legacy_crypto_enable", nil, nil); err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
 	}
-	if pkce != nil {
-		var err error
-		if *pkce {
-			if err = k.do("DELETE", p+"oauth2_allow_insecure_client_disable_pkce", nil, nil); errors.Is(err, ErrNotFound) {
-				err = nil
-			}
-		} else {
-			err = k.do("PUT", p+"oauth2_allow_insecure_client_disable_pkce", []string{"true"}, nil)
-		}
-		if err != nil {
+	if len(attrs) > 0 {
+		if err := k.do("PATCH", "/v1/oauth2/"+esc(name), map[string]any{"attrs": attrs}, nil); err != nil {
 			return err
 		}
 	}

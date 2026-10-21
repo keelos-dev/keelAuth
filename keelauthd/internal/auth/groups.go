@@ -11,11 +11,12 @@ import (
 
 // GroupOut is a group in the API.
 type GroupOut struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Members     []string `json:"members"`
-	GID         int      `json:"gid"`
-	Builtin     bool     `json:"builtin"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Members      []string `json:"members"`
+	MemberGroups []string `json:"member_groups"`
+	GID          int      `json:"gid"`
+	Builtin      bool     `json:"builtin"`
 }
 
 func groupOut(g *engine.Group) GroupOut {
@@ -23,7 +24,11 @@ func groupOut(g *engine.Group) GroupOut {
 	if m == nil {
 		m = []string{}
 	}
-	return GroupOut{Name: g.Name, Description: g.Description, Members: m, GID: g.GID, Builtin: g.Name == AdminGroup}
+	mg := slices.Clone(g.MemberGroups)
+	if mg == nil {
+		mg = []string{}
+	}
+	return GroupOut{Name: g.Name, Description: g.Description, Members: m, MemberGroups: mg, GID: g.GID, Builtin: g.Name == AdminGroup}
 }
 
 func (s *Server) getGroups(r *http.Request) (any, error) {
@@ -44,6 +49,36 @@ func (s *Server) lookupGroup(name string) (*engine.Group, error) {
 		return nil, notFound("no group %q", name)
 	}
 	return g, err
+}
+
+// checkMembers: every name is a user or an existing group; self is the group being
+// changed ("" for a new one). A group cannot be its own member or form a direct cycle.
+func (s *Server) checkMembers(self string, names []string) error {
+	var gs []engine.Group
+	for _, n := range names {
+		if gs == nil {
+			var err error
+			if gs, err = s.Eng.Groups(); err != nil {
+				return err
+			}
+		}
+		i := slices.IndexFunc(gs, func(g engine.Group) bool { return g.Name == n })
+		if i < 0 {
+			if err := s.checkUsers([]string{n}); err != nil {
+				return err
+			}
+			continue
+		}
+		switch {
+		case n == self:
+			return bad("group %q cannot be a member of itself", n)
+		case self == AdminGroup:
+			return bad("group %q cannot be a member of %s: only users", n, AdminGroup)
+		case slices.Contains(gs[i].MemberGroups, self):
+			return bad("group %q already has %q as a member: that would be a cycle", n, self)
+		}
+	}
+	return nil
 }
 
 // checkUsers: every name is a user.
@@ -67,7 +102,7 @@ func isNotFound(err error) bool {
 // setMembers sets a group's members, guarding the last admin.
 func (s *Server) setMembers(g *engine.Group, members []string) error {
 	members = slices.Compact(slices.Sorted(slices.Values(members)))
-	if err := s.checkUsers(members); err != nil {
+	if err := s.checkMembers(g.Name, members); err != nil {
 		return err
 	}
 	if g.Name == AdminGroup {
@@ -105,7 +140,7 @@ func (s *Server) postGroup(r *http.Request) (any, error) {
 	case reserved(req.Name):
 		return nil, conflict("the name %q is reserved", req.Name)
 	}
-	if err := s.checkUsers(req.Members); err != nil {
+	if err := s.checkMembers("", req.Members); err != nil {
 		return nil, err
 	}
 	g, err := s.Eng.CreateGroup(req.Name, req.Description)
@@ -168,7 +203,7 @@ func (s *Server) postMembers(r *http.Request) (any, error) {
 	if err := decode(r, &req); err != nil {
 		return nil, err
 	}
-	m := slices.DeleteFunc(slices.Clone(g.Members), func(x string) bool { return slices.Contains(req.Remove, x) })
+	m := slices.DeleteFunc(append(slices.Clone(g.Members), g.MemberGroups...), func(x string) bool { return slices.Contains(req.Remove, x) })
 	m = append(m, req.Add...)
 	sort.Strings(m)
 	if err := s.setMembers(g, m); err != nil {

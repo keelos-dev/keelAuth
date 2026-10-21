@@ -131,6 +131,7 @@ func (s *Server) setUserGroups(name string, groups []string) error {
 		if want {
 			m = append(m, name)
 		}
+		m = append(m, g.MemberGroups...) // nested groups stay
 		sort.Strings(m)
 		if err := s.Eng.SetMembers(g.Name, m); err != nil {
 			return err

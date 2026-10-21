@@ -177,18 +177,18 @@ var tools = []Tool{
 			var out any
 			return out, api.Do("POST", "/v1/users/"+url.PathEscape(n)+"/password", pick(a, "password", "must_change"), &out)
 		}},
-	{Name: "group_list", Title: "List groups", Description: "Every group with its members. keelauth-admins: the people who manage keelAuth.",
+	{Name: "group_list", Title: "List groups", Description: "Every group with its members (users) and member_groups (groups nested in it). keelauth-admins: the people who manage keelAuth.",
 		InputSchema: obj(map[string]any{}), Annotations: readOnly, Run: get("/v1/groups")},
-	{Name: "group_add", Title: "Add a group", Description: "Add a group (name like a user name), optionally with members.",
-		InputSchema: obj(map[string]any{"name": map[string]any{"type": "string"}, "description": map[string]any{"type": "string"}, "members": strList("user names")}, "name"),
+	{Name: "group_add", Title: "Add a group", Description: "Add a group (name like a user name), optionally with members (user names or names of existing groups: a group may be a member of another group).",
+		InputSchema: obj(map[string]any{"name": map[string]any{"type": "string"}, "description": map[string]any{"type": "string"}, "members": strList("user names or group names")}, "name"),
 		Annotations: writes,
 		Run: func(api Doer, a map[string]any) (any, error) {
 			var out any
 			return out, api.Do("POST", "/v1/groups", pick(a, "name", "description", "members"), &out)
 		}},
 	{Name: "group_members", Title: "Change a group's members",
-		Description: "Add users to and remove users from a group. Adding someone to keelauth-admins makes them an administrator of keelAuth.",
-		InputSchema: obj(map[string]any{"group": map[string]any{"type": "string"}, "add": strList("user names to add"), "remove": strList("user names to remove")}, "group"),
+		Description: "Add users or groups to and remove them from a group (a member may be a group; the answer lists them in member_groups). Adding someone to keelauth-admins makes them an administrator of keelAuth.",
+		InputSchema: obj(map[string]any{"group": map[string]any{"type": "string"}, "add": strList("user or group names to add"), "remove": strList("user or group names to remove")}, "group"),
 		Annotations: sensitive,
 		Run: func(api Doer, a map[string]any) (any, error) {
 			g, err := str(a, "group", true)
@@ -223,11 +223,12 @@ var tools = []Tool{
 			"name": map[string]any{"type": "string", "description": "short name, becomes the client id"}, "display_name": map[string]any{"type": "string"},
 			"landing_url": map[string]any{"type": "string", "description": "the application's address"}, "redirect_urls": strList("callback URLs"),
 			"scope_group": map[string]any{"type": "string"}, "pkce": map[string]any{"type": "boolean"},
+			"rs256":          map[string]any{"type": "boolean", "description": "sign ID tokens with RS256 instead of ES256, for applications that cannot verify ES256 (default false)"},
 			"short_username": map[string]any{"type": "boolean", "description": "user name without @domain (default true)"},
 		}, "name", "redirect_urls"), Annotations: writes,
 		Run: func(api Doer, a map[string]any) (any, error) {
 			var out any
-			return out, api.Do("POST", "/v1/oidc", pick(a, "name", "display_name", "landing_url", "redirect_urls", "scope_group", "pkce", "short_username"), &out)
+			return out, api.Do("POST", "/v1/oidc", pick(a, "name", "display_name", "landing_url", "redirect_urls", "scope_group", "pkce", "rs256", "short_username"), &out)
 		}},
 	{Name: "radius_list", Title: "RADIUS clients",
 		Description: "The RADIUS clients (Wi-Fi access points, VPN gateways) with their addresses and shared secrets, the group allowed to use RADIUS (empty: everybody), and users without an NT hash (they cannot use Wi-Fi until their password is set again).",

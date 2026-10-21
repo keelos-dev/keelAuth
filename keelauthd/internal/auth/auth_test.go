@@ -739,3 +739,77 @@ func TestOIDCRolesAndShortNames(t *testing.T) {
 		t.Error("roles stay after the app is gone")
 	}
 }
+
+// rs256: legacy crypto (RS256 ID tokens) for applications that cannot verify ES256; default off
+func TestOIDCRS256(t *testing.T) {
+	r := newRig(t)
+	o := r.ok("POST", "/v1/oidc", map[string]any{"name": "keel-host", "redirect_urls": []string{"https://192.0.2.1/sso/callback"}})
+	if o["rs256"] != false {
+		t.Errorf("default: %v", o)
+	}
+	if c, _ := r.eng.OAuth2("keel-host"); c.RS256 {
+		t.Error("engine: rs256 by default")
+	}
+	r.ok("DELETE", "/v1/oidc/keel-host", nil)
+	o = r.ok("POST", "/v1/oidc", map[string]any{"name": "keel-host", "redirect_urls": []string{"https://192.0.2.1/sso/callback"}, "rs256": true})
+	if o["rs256"] != true {
+		t.Errorf("created: %v", o)
+	}
+	if c, _ := r.eng.OAuth2("keel-host"); !c.RS256 {
+		t.Error("engine: no rs256")
+	}
+	o = r.ok("PATCH", "/v1/oidc/keel-host", map[string]any{"rs256": false})
+	if o["rs256"] != false {
+		t.Errorf("patched: %v", o)
+	}
+	if c, _ := r.eng.OAuth2("keel-host"); c.RS256 {
+		t.Error("engine: rs256 not cleared")
+	}
+	o = r.ok("PATCH", "/v1/oidc/keel-host", map[string]any{"rs256": true})
+	if o["rs256"] != true || o["pkce"] != true {
+		t.Errorf("patched on: %v", o)
+	}
+}
+
+func TestNestedGroups(t *testing.T) {
+	r := newRig(t)
+	r.ok("POST", "/v1/users", map[string]any{"name": "anna", "password": "Keel-Auth-2026", "mail": "anna@example.com"})
+	r.ok("POST", "/v1/groups", map[string]any{"name": "staff", "members": []string{"anna"}})
+	r.ok("POST", "/v1/groups", map[string]any{"name": "app-x-admins"})
+	g := r.ok("POST", "/v1/groups", map[string]any{"name": "app-x", "members": []string{"staff"}})
+	if mg := g["member_groups"].([]any); len(mg) != 1 || mg[0] != "staff" || len(g["members"].([]any)) != 0 {
+		t.Errorf("create with a group member: %v", g)
+	}
+	g = r.ok("POST", "/v1/groups/app-x/members", map[string]any{"add": []string{"app-x-admins", "anna"}})
+	if mg := g["member_groups"].([]any); len(mg) != 2 || mg[0] != "app-x-admins" || mg[1] != "staff" {
+		t.Errorf("member_groups: %v", g)
+	}
+	if m := g["members"].([]any); len(m) != 1 || m[0] != "anna" {
+		t.Errorf("members stay users: %v", g)
+	}
+	// removing a user keeps the member groups
+	g = r.ok("POST", "/v1/groups/app-x/members", map[string]any{"remove": []string{"anna"}})
+	if len(g["member_groups"].([]any)) != 2 || len(g["members"].([]any)) != 0 {
+		t.Errorf("after removing the user: %v", g)
+	}
+	for name, c := range map[string]struct {
+		path string
+		body any
+	}{
+		"self":         {"/v1/groups/app-x/members", map[string]any{"add": []string{"app-x"}}},
+		"direct cycle": {"/v1/groups/staff/members", map[string]any{"add": []string{"app-x"}}},
+		"unknown":      {"/v1/groups/staff/members", map[string]any{"add": []string{"nobody"}}},
+		"into admins":  {"/v1/groups/" + AdminGroup + "/members", map[string]any{"add": []string{"staff"}}},
+	} {
+		if code, _, _ := r.call("POST", c.path, "", c.body); code != 400 {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+	// deleting a group takes it out of the groups it was in
+	r.ok("DELETE", "/v1/groups/staff", nil)
+	for _, x := range r.ok("GET", "/v1/groups", nil)["groups"].([]any) {
+		if x.(map[string]any)["name"] == "app-x" && len(x.(map[string]any)["member_groups"].([]any)) != 1 {
+			t.Errorf("deleted group still a member: %v", x)
+		}
+	}
+}

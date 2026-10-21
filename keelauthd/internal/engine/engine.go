@@ -21,10 +21,11 @@ type User struct {
 
 // Group is a group in the engine (only the ones keelAuth made; built-in engine groups are left out).
 type Group struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Members     []string `json:"members"`
-	GID         int      `json:"gid"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Members      []string `json:"members"`       // users
+	MemberGroups []string `json:"member_groups"` // groups that are members (nesting)
+	GID          int      `json:"gid"`
 }
 
 // OAuth2 is an OIDC client (Kanidm calls it an OAuth2 resource server).
@@ -35,6 +36,7 @@ type OAuth2 struct {
 	RedirectURLs []string            `json:"redirect_urls"`
 	ScopeMaps    map[string][]string `json:"scope_maps"` // group -> scopes
 	PKCE         bool                `json:"pkce"`
+	RS256        bool                `json:"rs256"` // legacy crypto: RS256 ID tokens instead of ES256
 	// ShortName: preferred_username is the bare name (alice), not the SPN (alice@domain)
 	ShortName bool `json:"short_name"`
 }
@@ -80,7 +82,7 @@ type Engine interface {
 	OAuth2s() ([]OAuth2, error)
 	OAuth2(name string) (*OAuth2, error)
 	CreateOAuth2(c OAuth2) error
-	UpdateOAuth2(name string, displayName, landing *string, redirects []string, pkce *bool) error
+	UpdateOAuth2(name string, displayName, landing *string, redirects []string, pkce, rs256 *bool) error
 	SetScopeMap(name, group string, scopes []string) error
 	DeleteScopeMap(name, group string) error
 	OAuth2Secret(name string, reset bool) (string, error)

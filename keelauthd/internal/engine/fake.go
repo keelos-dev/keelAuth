@@ -193,8 +193,16 @@ func (f *Fake) CheckPassword(name, pw string) (bool, error) {
 
 func (f *Fake) groupCopy(g *Group) Group {
 	c := *g
-	c.Members = slices.Clone(g.Members)
+	c.Members, c.MemberGroups = []string{}, []string{}
+	for _, m := range g.Members {
+		if f.groups[m] != nil {
+			c.MemberGroups = append(c.MemberGroups, m)
+		} else {
+			c.Members = append(c.Members, m)
+		}
+	}
 	sort.Strings(c.Members)
+	sort.Strings(c.MemberGroups)
 	return c
 }
 
@@ -257,7 +265,7 @@ func (f *Fake) SetMembers(group string, members []string) error {
 		return NotFound("group", group)
 	}
 	for _, m := range members {
-		if f.users[m] == nil {
+		if f.users[m] == nil && f.groups[m] == nil {
 			return NotFound("user", m)
 		}
 	}
@@ -272,6 +280,9 @@ func (f *Fake) DeleteGroup(name string) error {
 		return NotFound("group", name)
 	}
 	delete(f.groups, name)
+	for _, g := range f.groups {
+		g.Members = slices.DeleteFunc(g.Members, func(m string) bool { return m == name })
+	}
 	for _, c := range f.clients {
 		delete(c.ScopeMaps, name)
 	}
@@ -326,7 +337,7 @@ func (f *Fake) CreateOAuth2(c OAuth2) error {
 	return nil
 }
 
-func (f *Fake) UpdateOAuth2(name string, display, landing *string, redirects []string, pkce *bool) error {
+func (f *Fake) UpdateOAuth2(name string, display, landing *string, redirects []string, pkce, rs256 *bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c := f.clients[name]
@@ -344,6 +355,9 @@ func (f *Fake) UpdateOAuth2(name string, display, landing *string, redirects []s
 	}
 	if pkce != nil {
 		c.PKCE = *pkce
+	}
+	if rs256 != nil {
+		c.RS256 = *rs256
 	}
 	return nil
 }

@@ -112,7 +112,8 @@ Other errors: `the name "x" is taken (a user or a group)`, `the name "admin" is 
 ```
 
 `group_add`: `name` (required), `description`, `members`. `group_members`: `group` (required),
-`add`, `remove` (lists of user names). Both answer with the group:
+`add`, `remove` (lists of names). A member may be a group (nesting; not into `keelauth-admins`, and no
+cycles): groups come back in `member_groups`, users in `members`. Both answer with the group:
 
 ```json
 {"name": "sales", "description": "", "members": ["bob"], "gid": 2061111789, "builtin": false}
@@ -127,14 +128,14 @@ Other errors: `the name "x" is taken (a user or a group)`, `the name "admin" is 
  "clients": [{"name": "gitlab", "client_id": "gitlab", "display_name": "GitLab",
    "landing_url": "https://gitlab.office.lan/",
    "redirect_urls": ["https://gitlab.office.lan/users/auth/openid_connect/callback"],
-   "scope_group": "office", "scopes": ["email", "groups", "openid", "profile"], "pkce": true,
+   "scope_group": "office", "scopes": ["email", "groups", "openid", "profile"], "pkce": true, "rs256": false,
    "short_username": true,
    "issuer": "https://keelauth.internal:8443/oauth2/openid/gitlab",
    "discovery_url": "https://keelauth.internal:8443/oauth2/openid/gitlab/.well-known/openid-configuration"}]}
 ```
 
 `oidc_create`: `name` and `redirect_urls` (required), `display_name`, `landing_url` (default: the
-first redirect URL's origin), `scope_group` (default: everybody), `pkce` (default true),
+first redirect URL's origin), `scope_group` (default: everybody), `pkce` (default true), `rs256` (default false: ID tokens are signed with RS256 instead of Kanidm's ES256, for applications that cannot verify ES256),
 `short_username` (default true: the ID token's `preferred_username` is `alice`; false: `alice@<domain>`).
 The answer is the client as above plus `client_secret`.
 

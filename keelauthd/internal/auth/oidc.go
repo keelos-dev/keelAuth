@@ -28,6 +28,7 @@ type OIDCOut struct {
 	Discovery    string   `json:"discovery_url"`
 	Issuer       string   `json:"issuer"`
 	PKCE         bool     `json:"pkce"`
+	RS256        bool     `json:"rs256"` // legacy crypto: RS256 ID tokens (default ES256)
 	// ShortUsername: preferred_username is "alice", not "alice@<domain>"
 	ShortUsername bool `json:"short_username"`
 	// Roles: what the application says its groups mean there (keelOS); RolesBy: who said it;
@@ -40,7 +41,7 @@ type OIDCOut struct {
 
 func (s *Server) oidcOut(c *engine.OAuth2) OIDCOut {
 	o := OIDCOut{Name: c.Name, DisplayName: c.DisplayName, LandingURL: c.LandingURL, RedirectURLs: c.RedirectURLs,
-		ClientID: c.Name, PKCE: c.PKCE, ShortUsername: c.ShortName, Scopes: []string{}}
+		ClientID: c.Name, PKCE: c.PKCE, RS256: c.RS256, ShortUsername: c.ShortName, Scopes: []string{}}
 	if r, ok := s.State().OIDCRoles[c.Name]; ok && len(r.Roles) > 0 {
 		o.Roles, o.RolesBy = r.Roles, r.By
 		for g := range r.Roles {
@@ -135,6 +136,7 @@ func (s *Server) postOIDC(r *http.Request) (any, error) {
 		RedirectURLs []string `json:"redirect_urls"`
 		ScopeGroup   string   `json:"scope_group"`
 		PKCE         *bool    `json:"pkce"`
+		RS256        *bool    `json:"rs256"`
 		Short        *bool    `json:"short_username"`
 	}
 	if err := decode(r, &req); err != nil {
@@ -163,7 +165,7 @@ func (s *Server) postOIDC(r *http.Request) (any, error) {
 		req.DisplayName = req.Name
 	}
 	pkce := req.PKCE == nil || *req.PKCE
-	c := engine.OAuth2{Name: req.Name, DisplayName: req.DisplayName, LandingURL: req.LandingURL, RedirectURLs: req.RedirectURLs, PKCE: pkce}
+	c := engine.OAuth2{Name: req.Name, DisplayName: req.DisplayName, LandingURL: req.LandingURL, RedirectURLs: req.RedirectURLs, PKCE: pkce, RS256: req.RS256 != nil && *req.RS256}
 	if err := s.Eng.CreateOAuth2(c); err != nil {
 		if errors.Is(err, engine.ErrExists) {
 			return nil, conflict("the name %q is taken", req.Name)
@@ -209,6 +211,7 @@ func (s *Server) patchOIDC(r *http.Request) (any, error) {
 		RedirectURLs *[]string `json:"redirect_urls"`
 		ScopeGroup   *string   `json:"scope_group"`
 		PKCE         *bool     `json:"pkce"`
+		RS256        *bool     `json:"rs256"`
 		Short        *bool     `json:"short_username"`
 	}
 	if err := decode(r, &req); err != nil {
@@ -230,8 +233,8 @@ func (s *Server) patchOIDC(r *http.Request) (any, error) {
 	if err := checkURLs(land, redirects); err != nil {
 		return nil, err
 	}
-	if req.DisplayName != nil || req.LandingURL != nil || req.RedirectURLs != nil || req.PKCE != nil {
-		if err := s.Eng.UpdateOAuth2(c.Name, req.DisplayName, req.LandingURL, redirects, req.PKCE); err != nil {
+	if req.DisplayName != nil || req.LandingURL != nil || req.RedirectURLs != nil || req.PKCE != nil || req.RS256 != nil {
+		if err := s.Eng.UpdateOAuth2(c.Name, req.DisplayName, req.LandingURL, redirects, req.PKCE, req.RS256); err != nil {
 			return nil, err
 		}
 	}

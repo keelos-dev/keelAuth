@@ -46,7 +46,10 @@ func spkiKey(t *testing.T) *ecdsa.PrivateKey {
 	return k
 }
 
-func certFP(c tls.Certificate) string { s := sha256.Sum256(c.Certificate[0]); return FormatFingerprint(s[:]) }
+func certFP(c tls.Certificate) string {
+	s := sha256.Sum256(c.Certificate[0])
+	return FormatFingerprint(s[:])
+}
 
 func keySPKI(t *testing.T, c tls.Certificate) string {
 	l, err := x509.ParseCertificate(c.Certificate[0])

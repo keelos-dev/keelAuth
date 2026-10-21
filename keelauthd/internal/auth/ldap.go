@@ -25,17 +25,26 @@ func (s *Server) ldapOut() (map[string]any, error) {
 	}
 	base := BaseDN(st.Domain)
 	host := st.Domain
+	originMode, _, _, _ := s.OriginInfo()
+	if originMode == "ip" {
+		_, host, _, _ = s.OriginInfo()
+	}
 	addrs := s.addresses()
 	// only the name: the certificate has no LAN address in it (it must not change with DHCP,
 	// docs/02 section 7.6), so a device that checks the name must reach keelAuth by the domain
 	urls := []string{fmt.Sprintf("ldaps://%s:%d", host, st.LDAPPort)}
+	note := fmt.Sprintf("the certificate names %s, not an IP address: put %s in the office DNS (or the device's hosts file) "+
+		"pointing at keelAuth's address, or have the device trust keelAuth's CA without checking the name", host, host)
+	if originMode == "ip" {
+		note = "the certificate carries keelAuth's LAN address " + host + ": devices that trust keelAuth's CA need no DNS entry"
+	}
 	return map[string]any{
-		"url":       urls[0],
-		"urls":      urls,
-		"host":      host,
-		"addresses": addrs,
-		"name_note": fmt.Sprintf("the certificate names %s, not an IP address: put %s in the office DNS (or the device's hosts file) "+
-			"pointing at keelAuth's address, or have the device trust keelAuth's CA without checking the name", host, host),
+		"url":            urls[0],
+		"urls":           urls,
+		"host":           host,
+		"addresses":      addrs,
+		"origin_mode":    originMode,
+		"name_note":      note,
 		"port":           st.LDAPPort,
 		"tls":            "LDAPS (TLS from the start; no StartTLS, no plain LDAP)",
 		"base_dn":        base,

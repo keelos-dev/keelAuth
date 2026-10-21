@@ -145,7 +145,7 @@ function AppForm({ app, groups, onClose, onDone }) {
 }
 
 // Connect: everything to enter in one application's OIDC settings (keelOS docs/54 D3).
-function Connect({ app, domain, onSecret, onClose }) {
+function Connect({ app, domain, ipMode, onSecret, onClose }) {
   const user = app.short_username ? "alice" : "alice@" + domain;
   return html`<${Dialog} title=${t("sso.connect1", app.display_name || app.name)} onClose=${onClose}><div class="stack">
     <${Fill} rows=${[
@@ -161,6 +161,7 @@ function Connect({ app, domain, onSecret, onClose }) {
       [t("sso.groupclaim"), html`<span class="mono">groups</span> <span class="muted small">${t("sso.claimex", "office@" + domain)}</span>`, true],
     ]} />
     <p class="muted small">${t("sso.note")}</p>
+    ${ipMode && html`<p class="muted small">${t("sso.noteip")}</p>`}
     <div class="actions"><button type="button" class="primary" onClick=${onClose}>${t("dlg.done")}</button></div></div><//>`;
 }
 
@@ -220,10 +221,11 @@ function SSO() {
       [t("sso.groupclaim"), "groups"],
     ]} />
     <p class="muted small">${t("sso.note")}</p>
+    ${d.origin_mode === "ip" && html`<p class="muted small">${t("sso.noteip")}</p>`}
     ${dlg && dlg.kind === "new" && html`<${AppForm} groups=${groups} onClose=${close}
       onDone=${(a) => { load(); setTimeout(() => setDlg({ kind: "shown", app: a, secret: a.client_secret })); }} />`}
     ${dlg && dlg.kind === "edit" && html`<${AppForm} app=${dlg.app} groups=${groups} onClose=${close} onDone=${load} />`}
-    ${dlg && dlg.kind === "connect" && html`<${Connect} app=${dlg.app} domain=${(d.issuer_base.match(/^https:\/\/([^:/]+)/) || [])[1] || ""} onClose=${close} onSecret=${() => secret(dlg.app, false)} />`}
+    ${dlg && dlg.kind === "connect" && html`<${Connect} app=${dlg.app} domain=${d.domain || (d.issuer_base.match(/^https:\/\/([^:/]+)/) || [])[1] || ""} ipMode=${d.origin_mode === "ip"} onClose=${close} onSecret=${() => secret(dlg.app, false)} />`}
     ${dlg && dlg.kind === "shown" && html`<${Shown} title=${t("sso.for1", dlg.app.name)} onClose=${close} note=${t("sso.secretnote")}
       rows=${[["Client ID", dlg.app.client_id || dlg.app.name], ["Client secret", dlg.secret], [t("sso.discovery"), dlg.app.discovery_url]]} />`}
   </div>`;

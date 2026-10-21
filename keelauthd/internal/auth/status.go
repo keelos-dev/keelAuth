@@ -32,6 +32,9 @@ func (s *Server) Alerts() []Alert {
 	if eerr != nil {
 		out = append(out, Alert{"engine", "error", "kanidmd", "Kanidm is not ready: " + eerr.Error()})
 	}
+	if _, _, _, fb := s.OriginInfo(); fb != "" {
+		out = append(out, Alert{"origin_ip_fallback", "warning", "origin", fb})
+	}
 	svc := s.CheckServices()
 	for _, n := range []string{"kanidmd", "radiusd"} {
 		if svc[n] != nil {
@@ -107,8 +110,9 @@ func (s *Server) getStatus(r *http.Request) (any, error) {
 		serrs["kanidmd"] = "keelauthd cannot use it: " + eerr.Error()
 	}
 	s.hmu.Unlock()
+	mode, _, _, _ := s.OriginInfo()
 	out := map[string]any{
-		"version": s.versionString(), "hostname": s.hostname(), "domain": st.Domain, "origin": Origin(st.Domain),
+		"version": s.versionString(), "hostname": s.hostname(), "domain": st.Domain, "origin": s.Origin(), "origin_mode": mode,
 		"addresses": s.addresses(), "uptime_s": int64(time.Since(s.started).Seconds()), "services": services,
 		"service_errors": serrs,
 		"counts":         counts, "last_backup": st.LastBackup, "alerts": len(s.Alerts()), "fingerprint": s.Fingerprint(),
@@ -131,7 +135,8 @@ func (s *Server) settingsOut(r *http.Request) map[string]any {
 	if tz == "" {
 		tz = "UTC"
 	}
-	return map[string]any{"domain": st.Domain, "origin": Origin(st.Domain), "https_listen": st.HTTPSListen,
+	mode, _, _, _ := s.OriginInfo()
+	return map[string]any{"domain": st.Domain, "origin": s.Origin(), "origin_mode": mode, "https_listen": st.HTTPSListen,
 		"backup_keep": st.BackupKeep, "ldap_port": st.LDAPPort, "fingerprint": s.Fingerprint(),
 		// timezone: keelAuth's own (standalone); managed by keel the page uses keel's (timezone_in_use)
 		"timezone": tz, "timezone_in_use": s.zoneFor(r), "timezone_from_keel": s.managed(),

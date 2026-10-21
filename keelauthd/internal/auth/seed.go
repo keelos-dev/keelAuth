@@ -40,6 +40,12 @@ type Seed struct {
 	Internal *SeedInternal `json:"internal,omitempty"`
 	// Domain: Kanidm's domain, used only at the first start (no engine database yet).
 	Domain string `json:"domain,omitempty"`
+	// Lan: the LAN's fixed address (the image's rc.d/keelauth applies it; keelauthd reads the
+	// address for the IP origin). Absent or mode not "static": DHCP.
+	Lan *SeedLan `json:"lan,omitempty"`
+	// Origin: "ip" = Kanidm's origin host is the fixed LAN address (docs/02 section 7.14),
+	// "domain" or "" = the domain.
+	Origin string `json:"origin,omitempty"`
 	// RegisterPath: where to register with keel; "" = DefaultRegisterPath.
 	RegisterPath string `json:"register_path,omitempty"`
 	// Timezone: keel's time zone when it made the seed (keelOS docs/47); keel's answers to the
@@ -48,6 +54,14 @@ type Seed struct {
 
 	fp   []byte // Fingerprint as 32 bytes
 	spki []byte // SPKI as 32 bytes, nil = none
+}
+
+// SeedLan is the seed's "lan".
+type SeedLan struct {
+	Mode    string   `json:"mode"`
+	Address string   `json:"address"` // 192.0.2.10/24
+	Gateway string   `json:"gateway,omitempty"`
+	DNS     []string `json:"dns,omitempty"`
 }
 
 // SeedInternal is the seed's "internal".
@@ -99,6 +113,16 @@ func ParseSeed(b []byte) (*Seed, error) {
 		u, err := url.Parse(k)
 		if err != nil || u.Scheme != "https" || u.Host == "" {
 			return nil, fmt.Errorf("seed: keel address %q is not an https URL", k)
+		}
+	}
+	switch sd.Origin {
+	case "", "ip", "domain":
+	default:
+		return nil, fmt.Errorf("seed: origin %q (ip or domain)", sd.Origin)
+	}
+	if l := sd.Lan; l != nil && l.Mode == "static" {
+		if ip, _, err := net.ParseCIDR(l.Address); err != nil || ip.To4() == nil {
+			return nil, fmt.Errorf("seed: lan address %q", l.Address)
 		}
 	}
 	if in := sd.Internal; in != nil {

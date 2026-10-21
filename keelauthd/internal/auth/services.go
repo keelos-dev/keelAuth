@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -28,8 +29,39 @@ const (
 
 func (s *Server) kanidmDir() string { return filepath.Join(s.Data, "kanidm") }
 
-// Origin is Kanidm's origin: where browsers reach its login page (SSO).
-func Origin(domain string) string { return fmt.Sprintf("https://%s:%d", domain, KanidmPort) }
+// originURL is an origin for a host (a domain or an IPv4 address).
+func originURL(host string) string { return fmt.Sprintf("https://%s:%d", host, KanidmPort) }
+
+// OriginInfo says how Kanidm's origin is made: mode "ip" (the host is the fixed LAN address, lan)
+// or "domain". want is what the seed asked for; fallback says why "ip" was refused (""
+// otherwise). Every origin, issuer and discovery address comes from here (docs/02 section 7.14).
+func (s *Server) OriginInfo() (mode, lan, want, fallback string) {
+	s.hmu.Lock()
+	sd := s.seed
+	s.hmu.Unlock()
+	want = "domain"
+	if sd != nil && sd.Origin == "ip" {
+		want = "ip"
+	}
+	if want == "domain" {
+		return "domain", "", want, ""
+	}
+	if sd.Lan != nil && sd.Lan.Mode == "static" {
+		if ip, _, err := net.ParseCIDR(sd.Lan.Address); err == nil && ip.To4() != nil {
+			return "ip", ip.String(), want, ""
+		}
+	}
+	return "domain", "", want, "IP origin needs a fixed LAN address: this keelAuth gets its address by DHCP, so the origin stays the domain name"
+}
+
+// Origin is Kanidm's origin: where browsers reach its login page (SSO) and the base of every
+// OIDC issuer.
+func (s *Server) Origin() string {
+	if mode, lan, _, _ := s.OriginInfo(); mode == "ip" {
+		return originURL(lan)
+	}
+	return originURL(s.State().Domain)
+}
 
 // BaseDN is Kanidm's LDAP base DN for a domain: dc=auth,dc=office,dc=lan.
 func BaseDN(domain string) string {
@@ -56,7 +88,7 @@ tls_key = %q
 domain = %q
 origin = %q
 `, KanidmPort, st.LDAPPort, filepath.Join(s.kanidmDir(), "kanidm.db"), filepath.Join(s.tlsDir(), useServerChain),
-		filepath.Join(s.tlsDir(), useServerKey), st.Domain, Origin(st.Domain)) + fsType
+		filepath.Join(s.tlsDir(), useServerKey), st.Domain, s.Origin()) + fsType
 }
 
 // FSType is the file system type a path is on, from `mount -p` (the longest mount point that

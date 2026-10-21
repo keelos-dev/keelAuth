@@ -161,6 +161,20 @@ printf '127.0.0.1\t\tkeelauth\n' >> $MNT/etc/hosts
 mkdir -p $MNT/data
 install -m 555 "$FILES/rc.d-keelauth" $MNT/etc/rc.d/keelauth
 install -m 555 "$FILES/rc.d-keelauthd" $MNT/usr/local/etc/rc.d/keelauthd
+# kanidmd from our fork (keelos-dev/kanidm, branch keel-1.11: an IP-literal origin is allowed,
+# docs/02 section 7.14), put next to this script as ./files/kanidmd by tools/image/vmbuild.sh;
+# it replaces the port's binary (the package's rc.d, user and directories stay). Without it the
+# port's kanidmd stays (origin must then be a domain name).
+if [ -x "$FILES/kanidmd" ]; then
+    # the port's rc.d runs /usr/local/libexec/kanidmd (bin/kanidmd is its wrapper): replace both
+    install -m 555 "$FILES/kanidmd" $MNT/usr/local/libexec/kanidmd
+    install -m 555 "$FILES/kanidmd" $MNT/usr/local/bin/kanidmd
+    [ -f "$FILES/kanidmd.version" ] && cp "$FILES/kanidmd.version" $MNT/usr/local/etc/kanidm/keelos-fork.version
+    say "kanidmd: keelOS fork $(cat "$FILES/kanidmd.version" 2>/dev/null || echo ?) over the port's"
+else
+    say "kanidmd: the port's (no ./files/kanidmd)"
+fi
+
 # keelauthd (built by keelauthd/build.sh, put next to this script as ./files/keelauthd).
 if [ -f "$FILES/keelauthd" ]; then
     install -m 555 "$FILES/keelauthd" $MNT/usr/local/sbin/keelauthd

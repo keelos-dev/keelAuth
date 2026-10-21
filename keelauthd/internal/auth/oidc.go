@@ -66,7 +66,7 @@ func (s *Server) oidcOut(c *engine.OAuth2) OIDCOut {
 			o.ScopeGroup = g
 		}
 	}
-	origin := Origin(s.State().Domain)
+	origin := s.Origin()
 	o.Issuer = origin + "/oauth2/openid/" + c.Name
 	o.Discovery = o.Issuer + "/.well-known/openid-configuration"
 	return o
@@ -81,7 +81,8 @@ func (s *Server) getOIDC(r *http.Request) (any, error) {
 	for i := range cs {
 		out = append(out, s.oidcOut(&cs[i]))
 	}
-	return map[string]any{"issuer_base": Origin(s.State().Domain) + "/oauth2/openid/", "clients": out}, nil
+	mode, _, _, _ := s.OriginInfo()
+	return map[string]any{"issuer_base": s.Origin() + "/oauth2/openid/", "origin_mode": mode, "domain": s.State().Domain, "clients": out}, nil
 }
 
 func (s *Server) lookupOIDC(name string) (*engine.OAuth2, error) {

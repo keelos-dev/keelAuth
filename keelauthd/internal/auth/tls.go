@@ -159,11 +159,17 @@ func (s *Server) EnsureTLS(domain, internalIP string) (TLSChanged, error) {
 	if ip := net.ParseIP(internalIP); ip != nil {
 		ips = append(ips, ip)
 	}
-	if ch.Server, err = s.ensureLeaf(ca, caKey, serverCertFile, serverKeyFile, chainFile, keyECDSA, domain, names, ips); err != nil {
+	// the IP origin (docs/02 section 7.14): the LAN address is a SAN of the server certificate
+	var lan net.IP
+	if mode, a, _, _ := s.OriginInfo(); mode == "ip" {
+		lan = net.ParseIP(a)
+		ips = append(ips, lan)
+	}
+	if ch.Server, err = s.ensureLeaf(ca, caKey, serverCertFile, serverKeyFile, chainFile, keyECDSA, domain, names, ips, lan); err != nil {
 		return ch, err
 	}
 	if ch.Radius, err = s.ensureLeaf(ca, caKey, radiusCertFile, radiusKeyFile, radiusChainFile, keyRSA2048, domain,
-		[]string{domain, s.hostname()}, nil); err != nil {
+		[]string{domain, s.hostname()}, nil, nil); err != nil {
 		return ch, err
 	}
 	// what the services read (the own ones, or the office's: certs.go)
@@ -175,13 +181,30 @@ func (s *Server) EnsureTLS(domain, internalIP string) (TLSChanged, error) {
 	return ch, nil
 }
 
+// lanSANOK: the certificate has the LAN address as a SAN exactly when lan is set; without lan it
+// has no address but loopback and the link-local internal one (the IP origin was switched off or
+// the address changed: a new certificate).
+func lanSANOK(c *x509.Certificate, lan net.IP) bool {
+	have := false
+	for _, ip := range c.IPAddresses {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		if lan == nil || !ip.Equal(lan) {
+			return false
+		}
+		have = true
+	}
+	return lan == nil || have
+}
+
 // ensureLeaf keeps a certificate that is signed by the CA, names the domain and lasts more
 // than 30 days; else it makes a new one. It reports whether it did.
 func (s *Server) ensureLeaf(ca *x509.Certificate, caKey crypto.Signer, certFile, keyFile, chain string, kind keyKind,
-	domain string, names []string, ips []net.IP) (bool, error) {
+	domain string, names []string, ips []net.IP, lan net.IP) (bool, error) {
 	dir := s.tlsDir()
 	if c, _, err := s.readPair(certFile, keyFile); err == nil && time.Until(c.NotAfter) > renewBefore &&
-		slices.Contains(c.DNSNames, domain) && c.CheckSignatureFrom(ca) == nil {
+		slices.Contains(c.DNSNames, domain) && lanSANOK(c, lan) && c.CheckSignatureFrom(ca) == nil {
 		return false, nil
 	}
 	k, kpem, err := newKey(kind)

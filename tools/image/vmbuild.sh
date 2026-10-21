@@ -30,7 +30,13 @@ trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/img"
 cp "$HERE/build.sh" "$W/img/"
 cp -R "$HERE/files" "$W/img/files"
-rm -f "$W/img/files/keelauthd"
+rm -f "$W/img/files/keelauthd" "$W/img/files/kanidmd" "$W/img/files/kanidmd.version"
+# the forked kanidmd (KA_KANIDMD: the binary from the Rust builder, KA_KANIDMD_VERSION: its commit)
+if [ -n "${KA_KANIDMD:-}" ] && [ -x "$KA_KANIDMD" ]; then
+    cp "$KA_KANIDMD" "$W/img/files/kanidmd"
+    echo "${KA_KANIDMD_VERSION:-unknown}" > "$W/img/files/kanidmd.version"
+    echo "kanidmd: $KA_KANIDMD (${KA_KANIDMD_VERSION:-unknown})"
+fi
 if [ -x "$REPO/keelauthd/keelauthd" ]; then
     cp "$REPO/keelauthd/keelauthd" "$W/img/files/keelauthd"
     echo "keelauthd: $REPO/keelauthd/keelauthd"

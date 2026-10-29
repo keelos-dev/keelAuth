@@ -140,7 +140,7 @@ func (s *Server) settingsOut(r *http.Request) map[string]any {
 		"backup_keep": st.BackupKeep, "ldap_port": st.LDAPPort, "fingerprint": s.Fingerprint(),
 		// timezone: keelAuth's own (standalone); managed by keel the page uses keel's (timezone_in_use)
 		"timezone": tz, "timezone_in_use": s.zoneFor(r), "timezone_from_keel": s.managed(),
-		"master_key": s.masterKeyInfo()}
+		"master_key": s.masterKeyInfo(), "brand": st.Brand.out()}
 }
 
 func (s *Server) getSettings(r *http.Request) (any, error) { return s.settingsOut(r), nil }

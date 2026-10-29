@@ -131,9 +131,10 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 type Caller struct {
 	Name    string
 	Admin   bool
-	Kind    string // "local", "keel", "session", "token", "sync", ""
+	Kind    string // "local", "keel", "session", "token", "sync", "api", "mcp", ""
 	Session *session
 	TokenID string
+	Scope   string // an API key's
 }
 
 type ctxKey struct{}
@@ -159,12 +160,16 @@ func (s *Server) identify(r *http.Request) *Caller {
 		case k != "" && subtle.ConstantTimeCompare([]byte(b), []byte(k)) == 1:
 			return &Caller{Name: "keel", Admin: true, Kind: "keel"}
 		case strings.HasPrefix(b, tokenPrefix):
-			if id := s.useToken(b, false); id != "" {
-				return &Caller{Name: "mcp:" + id, Admin: true, Kind: "token", TokenID: id}
+			if t := s.useToken(b, kindMCP); t != nil {
+				return &Caller{Name: "mcp:" + t.ID, Admin: true, Kind: "token", TokenID: t.ID}
 			}
 		case strings.HasPrefix(b, syncKeyPrefix):
-			if id := s.useToken(b, true); id != "" {
-				return &Caller{Name: "sync:" + id, Kind: "sync", TokenID: id}
+			if t := s.useToken(b, kindSync); t != nil {
+				return &Caller{Name: "sync:" + t.ID, Kind: "sync", TokenID: t.ID}
+			}
+		case strings.HasPrefix(b, apiKeyPrefix):
+			if t := s.useToken(b, kindAPI); t != nil {
+				return &Caller{Name: "api:" + t.ID, Admin: t.Scope == "admin", Kind: kindAPI, TokenID: t.ID, Scope: t.Scope}
 			}
 		}
 		return &Caller{Kind: "bad"}
@@ -205,6 +210,9 @@ func (s *Server) buildHandler() http.Handler {
 	m.HandleFunc("POST /login", s.wrap(s.ready(s.postLogin)))
 	m.HandleFunc("POST /logout", s.postLogout)
 	m.HandleFunc("GET /session", s.wrap(s.getSession))
+	// the company's name and logo: the login page shows them (brand.go)
+	m.HandleFunc("GET /brand", s.wrap(s.getBrand))
+	m.HandleFunc("GET /brand/logo", s.getBrandLogo)
 	m.HandleFunc("POST /password", s.need(s.loggedIn, s.wrap(s.ready(s.postOwnPassword))))
 	// a locked master key (masterkey.go): nobody can log in, so no login for this; tries are limited
 	m.HandleFunc("POST /unlock", s.wrap(s.postUnlock))
@@ -213,7 +221,7 @@ func (s *Server) buildHandler() http.Handler {
 		if pat != "GET /v1/status" && pat != "GET /v1/alerts" && pat != "GET /v1/settings" {
 			h = s.ready(h)
 		}
-		m.HandleFunc(pat, s.need(s.admin, s.wrap(h)))
+		m.HandleFunc(pat, s.need(s.apiAllowed(pat), s.wrap(h)))
 	}
 	a("GET /v1/status", s.getStatus)
 	a("GET /v1/users", s.getUsers)
@@ -269,7 +277,14 @@ func (s *Server) buildHandler() http.Handler {
 	a("PUT /v1/recovery", s.putRecovery)
 	a("GET /v1/alerts", s.getAlerts)
 	a("GET /v1/settings", s.getSettings)
+	m.HandleFunc("GET /v1/brand", s.need(s.admin, s.wrap(s.getBrand)))
+	m.HandleFunc("PUT /v1/brand", s.need(s.admin, s.wrap(s.putBrand)))
+	m.HandleFunc("PUT /v1/brand/logo", s.need(s.admin, s.wrap(s.putBrandLogo)))
+	m.HandleFunc("DELETE /v1/brand/logo", s.need(s.admin, s.wrap(s.deleteBrandLogo)))
 	a("PUT /v1/settings", s.putSettings)
+	a("GET /v1/api/keys", s.getAPIKeys)
+	a("POST /v1/api/keys", s.postAPIKey)
+	a("DELETE /v1/api/keys/{id}", s.deleteAPIKey)
 	a("GET /v1/tokens", s.getTokens)
 	a("POST /v1/tokens", s.postToken)
 	a("DELETE /v1/tokens/{id}", s.deleteToken)
@@ -343,11 +358,11 @@ func (s *Server) admin(c *Caller) error {
 	switch {
 	case c.Kind == "bad":
 		return coded(http.StatusUnauthorized, "bad_token", "a valid key is required")
-	case c.Kind == "" || c.Kind == "token" || c.Kind == "sync": // an MCP token works through /mcp (kind "mcp")
+	case c.Kind == "" || c.Kind == "token" || c.Kind == "sync" || (c.Kind == kindAPI && !c.Admin): // an MCP token works through /mcp (kind "mcp")
 		if c.Kind == "" {
 			return coded(http.StatusUnauthorized, "login", "log in first")
 		}
-		return coded(http.StatusForbidden, "scope", "this token is only for %s", map[string]string{"token": "POST /mcp", "sync": "GET /v1/sync/accounts"}[c.Kind])
+		return coded(http.StatusForbidden, "scope", "this token is only for %s", map[string]string{"token": "POST /mcp", "sync": "GET /v1/sync/accounts", kindAPI: "the routes of its scope"}[c.Kind])
 	case !c.Admin:
 		return coded(http.StatusForbidden, "not_admin", "only members of %s may manage keelAuth", AdminGroup)
 	case c.Kind == "session" && s.mustChange(c.Name):

@@ -1,14 +1,15 @@
 // Settings: general (time zone, the master key's protection), AI management (MCP tokens),
 // keelNAS sync keys, the certificate. Sub-tabs; every change in a dialog.
 import { useEffect, useState } from "preact/hooks";
-import { api, html, rel } from "./api.js";
-import { fmtTime, t } from "./i18n.js";
+import { api, html, rel, send } from "./api.js";
+import { fmtTime, langName, t } from "./i18n.js";
+import { loadBrand, logoURL } from "./brand.js";
 import { setZone, zones } from "./time.js";
 import { ask, FormDialog, Spinner, toast } from "./ui.js";
 import { Shown } from "./users.js";
 
 const fail = (e) => toast(e.message, 8000);
-const subs = ["general", "ai", "sync", "cert"];
+const subs = ["general", "ai", "api", "sync", "cert"];
 
 function ZoneDialog({ zone, onClose, onDone }) {
   const [z, setZ] = useState(zone);
@@ -35,6 +36,37 @@ function PassDialog({ onClose, onDone }) {
   <//>`;
 }
 
+const brandLangs = ["zh", "en", "ja"];
+
+// BrandDialog: the company's name per language and its logo (keelauthd brand.go).
+function BrandDialog({ brand, onClose, onDone }) {
+  const [name, setName] = useState({ ...(brand.name || {}) });
+  const [file, setFile] = useState(null);
+  const [remove, setRemove] = useState(false);
+  const save = async () => {
+    await api("PUT", "v1/brand", { name });
+    if (file) await send("PUT", "v1/brand/logo", file, file.type || "application/octet-stream");
+    else if (remove) await api("DELETE", "v1/brand/logo");
+    await loadBrand();
+    toast(t("brand.saved"));
+    onDone();
+  };
+  return html`<${FormDialog} title=${t("gen.brand")} submit=${t("save")} onSubmit=${save} onClose=${onClose}>
+    <p class="muted small">${t("brand.for")}</p>
+    ${brandLangs.map((l) => html`<label key=${l}>${t("brand.namein", langName(l))}<input type="text" maxlength="60" value=${name[l] || ""} placeholder="keelAuth" onInput=${(e) => setName({ ...name, [l]: e.target.value })} /></label>`)}
+    <label>${t("brand.logofile")}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange=${(e) => setFile(e.target.files[0] || null)} />
+      <span class="muted small">${t("brand.logohint")}</span></label>
+    ${brand.logo && !file && html`<label class="check"><input type="checkbox" checked=${remove} onChange=${(e) => setRemove(e.target.checked)} /> ${t("brand.remove")}</label>`}
+  <//>`;
+}
+
+function brandNames(b) {
+  const n = (b && b.name) || {};
+  const set = brandLangs.filter((l) => n[l]);
+  if (!set.length) return t("brand.default");
+  return set.map((l) => html`<span class="brand-name"><span class="muted">${langName(l)}:</span> ${n[l]}</span>`);
+}
+
 function General() {
   const [s, setS] = useState(null);
   const [dlg, setDlg] = useState(null);
@@ -49,28 +81,64 @@ function General() {
         : html`${s.timezone} <button class="btn" onClick=${() => setDlg("tz")}>${t("edit")}</button>`}</td></tr>
       <tr><th>${t("gen.mk")}</th><td>${prot ? prot : html`<span class="warn">${t("gen.mknone")}</span>`}
         ${!s.timezone_from_keel && html` <button class="btn" onClick=${() => setDlg("pass")}>${mk.slots.includes("passphrase") ? t("gen.changepass") : t("gen.setpass")}</button>`}</td></tr>
+      <tr><th>${t("gen.brand")}</th><td>${brandNames(s.brand)}
+        <span class="brand-row-logo">${s.brand && s.brand.logo ? html`<img class="brand-preview" src=${logoURL()} alt="" />` : html`<span class="muted">${t("brand.logo")}: ${t("brand.logonone")}</span>`}</span>
+        <button class="btn" onClick=${() => setDlg("brand")}>${t("edit")}</button></td></tr>
     </tbody></table>
     <p class="muted small">${s.timezone_from_keel ? t("gen.mkkeelnote") : t("gen.tzfor")}</p>
     ${dlg === "tz" && html`<${ZoneDialog} zone=${s.timezone} onClose=${() => setDlg(null)} onDone=${load} />`}
+    ${dlg === "brand" && html`<${BrandDialog} brand=${s.brand || {}} onClose=${() => setDlg(null)} onDone=${() => { setDlg(null); load(); }} />`}
     ${dlg === "pass" && html`<${PassDialog} onClose=${() => setDlg(null)} onDone=${load} />`}
   </div>`;
 }
 
-function NewToken({ title, onClose, onDone, path }) {
+// NewToken: scopes given = an API key, with its scope (api.scope.<name> says what each allows)
+function NewToken({ title, onClose, onDone, path, scopes }) {
   const [name, setName] = useState("");
-  const save = async () => onDone(await api("POST", path, { name: name.trim() }));
+  const [scope, setScope] = useState(scopes ? scopes[0] : "");
+  const save = async () => onDone(await api("POST", path, scopes ? { name: name.trim(), scope } : { name: name.trim() }));
   return html`<${FormDialog} title=${title} submit=${t("tok.make")} onSubmit=${save} onClose=${onClose}>
     <label>${t("tok.name")}<input type="text" required maxlength="64" value=${name} onInput=${(e) => setName(e.target.value)} />
       <span class="muted small">${t("tok.namehint")}</span></label>
+    ${scopes && html`<label>${t("api.scope")}<select value=${scope} onChange=${(e) => setScope(e.target.value)}>
+        ${scopes.map((x) => html`<option value=${x}>${t("api.scope." + x)}</option>`)}</select>
+      <span class="muted small">${t("api.scopehint." + scope)}</span></label>`}
   <//>`;
 }
 
-function TokenList({ list, onDelete }) {
+function TokenList({ list, onDelete, scope }) {
   if (!list.length) return html`<p class="muted">${t("tok.none")}</p>`;
   return html`<div class="table-wrap tall"><table class="data plain">
-    <thead><tr><th>${t("tok.name")}</th><th>ID</th><th>${t("tok.created")}</th><th>${t("tok.used")}</th><th></th></tr></thead>
-    <tbody>${list.map((x) => html`<tr><td><b>${x.name}</b></td><td class="mono">${x.id}</td><td>${fmtTime(x.created)}</td><td>${x.last_used ? fmtTime(x.last_used) : "–"}</td>
+    <thead><tr><th>${t("tok.name")}</th><th>ID</th>${scope && html`<th>${t("api.scope")}</th>`}<th>${t("tok.created")}</th><th>${t("tok.used")}</th><th></th></tr></thead>
+    <tbody>${list.map((x) => html`<tr><td><b>${x.name}</b></td><td class="mono">${x.id}</td>${scope && html`<td>${t("api.scope." + x.scope)}</td>`}<td>${fmtTime(x.created)}</td><td>${x.last_used ? fmtTime(x.last_used) : "–"}</td>
       <td><button class="btn danger" onClick=${() => onDelete(x)}>${t("tok.revoke")}</button></td></tr>`)}</tbody></table></div>`;
+}
+
+// API keys: another system (a web application moving its accounts here, docs/02 §3.11) calls
+// /v1 with a key of its own; the key's scope says how far it may go
+function API() {
+  const [d, setD] = useState(null);
+  const [dlg, setDlg] = useState(null);
+  const [addr, setAddr] = useState("");
+  const load = () => api("GET", "v1/api/keys").then(setD).catch(fail);
+  useEffect(() => { load(); api("GET", "v1/status").then((s) => setAddr((s.addresses || [])[0] || s.domain)).catch(() => {}); }, []);
+  if (!d) return html`<${Spinner} />`;
+  const del = async (x) => {
+    if (!await ask(t("tok.revokeq", x.name))) return;
+    try { await api("DELETE", "v1/api/keys/" + x.id); load(); } catch (e) { fail(e); }
+  };
+  const cmd = (key) => "curl -H 'Authorization: Bearer " + key + "' https://" + (addr || location.hostname) + "/v1/users";
+  return html`<div class="card"><div class="row-head"><h3>${t("api.title")}</h3><button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("api.new")}</button></div>
+    <p class="ka-for">${t("api.for")}</p>
+    <${TokenList} list=${d.keys} onDelete=${del} scope=${true} />
+    <h3 class="sub">${t("ai.connect")}</h3>
+    <pre class="code">${cmd("kap_…")}</pre>
+    <p class="muted small">${t("api.note", d.fingerprint)}</p>
+    ${dlg && dlg.kind === "new" && html`<${NewToken} title=${t("api.new")} path="v1/api/keys" scopes=${d.scopes} onClose=${() => setDlg(null)}
+      onDone=${(x) => { load(); setTimeout(() => setDlg({ kind: "shown", x })); }} />`}
+    ${dlg && dlg.kind === "shown" && html`<${Shown} title=${t("ai.made", dlg.x.name)} onClose=${() => setDlg(null)}
+      rows=${[[t("api.key"), dlg.x.key], [t("ai.command"), cmd(dlg.x.key)]]} />`}
+  </div>`;
 }
 
 function AI() {
@@ -183,5 +251,5 @@ export function Settings({ sub }) {
   const tab = subs.includes(sub) ? sub : "general";
   return html`<nav class="subnav" aria-label=${t("nav.settings")}>${subs.map((k) => html`<a href=${"#/settings/" + k} class=${k === tab ? "on" : ""}
       aria-current=${k === tab ? "page" : null}>${t("set." + k)}</a>`)}</nav>
-    <div class="stack">${tab === "general" ? html`<${General} />` : tab === "ai" ? html`<${AI} />` : tab === "sync" ? html`<${Sync} />` : html`<${Cert} />`}</div>`;
+    <div class="stack">${tab === "general" ? html`<${General} />` : tab === "ai" ? html`<${AI} />` : tab === "api" ? html`<${API} />` : tab === "sync" ? html`<${Sync} />` : html`<${Cert} />`}</div>`;
 }

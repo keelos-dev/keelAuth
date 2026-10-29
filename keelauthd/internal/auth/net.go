@@ -3,6 +3,7 @@ package auth
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -172,4 +173,26 @@ func (s *Server) httpsPort() int {
 	}
 	n, _ := strconv.Atoi(p)
 	return n
+}
+
+// redirectHandler sends every request to https:// on the same host, with httpsAddr's port when
+// it is not 443 (as keel's).
+func redirectHandler(httpsAddr string) http.Handler {
+	_, port, _ := net.SplitHostPort(httpsAddr)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if hh, _, err := net.SplitHostPort(host); err == nil {
+			host = hh
+		}
+		if host == "" {
+			http.Error(w, "use https", http.StatusBadRequest)
+			return
+		}
+		if port != "" && port != "443" {
+			host = net.JoinHostPort(host, port)
+		} else if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+			host = "[" + host + "]"
+		}
+		http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusMovedPermanently)
+	})
 }

@@ -172,6 +172,8 @@ func (s *Server) Serve(socket string) error {
 	}
 	if st.HTTPSListen != "" {
 		go s.serveTCP(st.HTTPSListen, h, &tls.Config{GetCertificate: s.serverCert, MinVersion: tls.VersionTLS12})
+		// http://<address>/ typed into a browser lands on the page too (keel does the same)
+		go s.serveKind(DefaultHTTP, redirectHandler(st.HTTPSListen), nil, "HTTP, redirects to HTTPS")
 	}
 	go func() {
 		<-s.unlockedCh // a locked master key: nothing works until it is given (POST /unlock)
@@ -225,12 +227,16 @@ func (s *Server) hasEngineDB() bool {
 
 // serveTCP keeps trying: at boot the address may come a little later.
 func (s *Server) serveTCP(addr string, h http.Handler, tc *tls.Config) {
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, TLSConfig: tc,
-		ErrorLog: log.New(discard{}, "", 0)} // TLS handshake noise from scanners
 	kind := "HTTP, key required"
 	if tc != nil {
 		kind = "HTTPS"
 	}
+	s.serveKind(addr, h, tc, kind)
+}
+
+func (s *Server) serveKind(addr string, h http.Handler, tc *tls.Config, kind string) {
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, TLSConfig: tc,
+		ErrorLog: log.New(discard{}, "", 0)} // TLS handshake noise from scanners
 	for i := 0; ; i++ {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {

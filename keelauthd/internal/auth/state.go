@@ -22,6 +22,7 @@ const (
 	BindAccount    = "keelauth-ldap" // the read-only LDAP bind account for devices
 	DefaultDomain  = "keelauth.internal"
 	DefaultHTTPS   = ":443"
+	DefaultHTTP    = ":80" // redirects to DefaultHTTPS (server.go)
 	DefaultLDAP    = 636
 	KanidmPort     = 8443
 	RadiusPort     = 1812
@@ -32,6 +33,7 @@ const (
 	stateVersion   = 1
 	tokenPrefix    = "kat_" // MCP tokens
 	syncKeyPrefix  = "kas_" // keelNAS sync keys
+	apiKeyPrefix   = "kap_" // API keys of other systems (tokens.go)
 	sealedAdminKey = "idm_admin"
 )
 
@@ -57,13 +59,15 @@ type Radius struct {
 	Local   string         `json:"local"` // sealed secret of the 127.0.0.1 client (self-test)
 }
 
-// Token is an MCP token or a sync key: only its SHA-256 is kept.
+// Token is an MCP token, a sync key or an API key: only its SHA-256 is kept. Scope is the
+// API key's ("users" or "admin", tokens.go).
 type Token struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Hash     string `json:"hash"`
 	Created  string `json:"created"`
 	LastUsed string `json:"last_used,omitempty"`
+	Scope    string `json:"scope,omitempty"`
 }
 
 // State is keelauthd's own data. Accounts themselves are in the engine.
@@ -83,6 +87,7 @@ type State struct {
 	BindPW      string               `json:"ldap_bind,omitempty"` // sealed password of BindAccount
 	Tokens      []Token              `json:"tokens"`
 	SyncKeys    []Token              `json:"sync_keys"`
+	APIKeys     []Token              `json:"api_keys"`
 	Revision    int64                `json:"revision"`
 	BackupKeep  int                  `json:"backup_keep"`
 	LastBackup  string               `json:"last_backup,omitempty"`
@@ -93,6 +98,9 @@ type State struct {
 	// (keelOS: keel-admins = admin…, PUT /v1/oidc/{name}/roles); the page shows them and offers
 	// to make the missing groups
 	OIDCRoles map[string]OIDCRoles `json:"oidc_roles,omitempty"`
+	// Brand: the company's own name and logo on the page (brand.go): the name per language
+	// (zh, en, ja; one left empty shows the first that is set), the logo file and its type.
+	Brand Brand `json:"brand,omitempty"`
 	// Devices: LDAP device accounts (Kanidm service accounts with a read-only API token as
 	// their password, devices.go); the token itself is only in Kanidm (as its hash) and shown once
 	Devices []Device `json:"devices,omitempty"`
@@ -134,6 +142,9 @@ func (s *State) normalize() {
 	if s.SyncKeys == nil {
 		s.SyncKeys = []Token{}
 	}
+	if s.APIKeys == nil {
+		s.APIKeys = []Token{}
+	}
 	if s.BackupKeep <= 0 {
 		s.BackupKeep = DefaultKeep
 	}
@@ -150,6 +161,7 @@ func (s *State) Clone() *State {
 	c.Radius.Clients = slices.Clone(s.Radius.Clients)
 	c.Tokens = slices.Clone(s.Tokens)
 	c.SyncKeys = slices.Clone(s.SyncKeys)
+	c.APIKeys = slices.Clone(s.APIKeys)
 	c.Devices = slices.Clone(s.Devices)
 	if s.OIDCRoles != nil {
 		c.OIDCRoles = map[string]OIDCRoles{}

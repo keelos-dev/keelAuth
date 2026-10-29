@@ -58,3 +58,14 @@ export async function upload(path, file) {
   if (!r.ok) throw new HTTPError(r.status, srvText(j) || r.status + " " + r.statusText, j);
   return j;
 }
+
+// send sends raw bytes as the request's body with their own type (a logo: PUT v1/brand/logo).
+export async function send(method, path, body, ctype) {
+  const hd = { "Content-Type": ctype };
+  if (csrf) hd["X-Keelauth-CSRF"] = csrf;
+  const r = await fetch(rel(path), { method, headers: hd, credentials: "same-origin", cache: "no-store", body });
+  let j = null;
+  try { j = await r.json(); } catch (_) { /* empty */ }
+  if (!r.ok) throw new HTTPError(r.status, srvText(j) || r.status + " " + r.statusText, j);
+  return j;
+}

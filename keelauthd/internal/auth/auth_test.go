@@ -401,6 +401,52 @@ func TestAccessKinds(t *testing.T) {
 	if code, _, _ := r.call("GET", "/v1/users", "Bearer "+key, nil); code != 403 {
 		t.Errorf("sync key on the API: %d", code)
 	}
+	// an API key: within its scope; never the keys
+	if code, _, _ := r.call("POST", "/v1/api/keys", "", map[string]any{"name": "w3", "scope": "all"}); code != 400 {
+		t.Errorf("bad scope: %d", code)
+	}
+	ak := r.ok("POST", "/v1/api/keys", map[string]any{"name": "w3", "scope": "users"})["key"].(string)
+	if !strings.HasPrefix(ak, "kap_") {
+		t.Fatalf("api key %q", ak)
+	}
+	for _, c := range []struct {
+		method, path string
+		body         map[string]any
+		want         int
+	}{
+		{"GET", "/v1/users", nil, 200},
+		{"POST", "/v1/users", map[string]any{"name": "ben", "password": "Keel-Auth-2026-b", "must_change": false}, 200},
+		{"POST", "/v1/users/ben/password", map[string]any{"password": "Keel-Auth-2026-c"}, 200},
+		{"GET", "/v1/groups", nil, 200},
+		{"DELETE", "/v1/users/ben", nil, 403},
+		{"GET", "/v1/settings", nil, 403},
+		{"GET", "/v1/tokens", nil, 403},
+		{"POST", "/v1/api/keys", map[string]any{"name": "more", "scope": "admin"}, 403},
+		{"GET", "/v1/sync/accounts", nil, 403},
+		{"POST", "/mcp", map[string]any{}, 401},
+	} {
+		if code, out, _ := r.call(c.method, c.path, "Bearer "+ak, c.body); code != c.want {
+			t.Errorf("api key %s %s: %d %v", c.method, c.path, code, out)
+		}
+	}
+	admk := r.ok("POST", "/v1/api/keys", map[string]any{"name": "ops", "scope": "admin"})["key"].(string)
+	for _, c := range []struct {
+		path string
+		want int
+	}{{"/v1/settings", 200}, {"/v1/tokens", 403}, {"/v1/api/keys", 403}} {
+		if code, _, _ := r.call("GET", c.path, "Bearer "+admk, nil); code != c.want {
+			t.Errorf("admin key %s: %d", c.path, code)
+		}
+	}
+	ks := r.ok("GET", "/v1/api/keys", nil)["keys"].([]any)
+	if len(ks) != 2 || ks[0].(map[string]any)["scope"] != "users" {
+		t.Errorf("keys: %v", ks)
+	}
+	r.ok("DELETE", "/v1/api/keys/"+ks[1].(map[string]any)["id"].(string), nil)
+	if code, _, _ := r.call("GET", "/v1/settings", "Bearer "+admk, nil); code != 401 {
+		t.Errorf("revoked admin key: %d", code)
+	}
+	r.ok("DELETE", "/v1/users/ben", nil)
 	r.ok("POST", "/v1/users", map[string]any{"name": "anna", "password": "Keel-Auth-2026"})
 	code, out, _ := r.call("GET", "/v1/sync/accounts", "Bearer "+key, nil)
 	if code != 200 {

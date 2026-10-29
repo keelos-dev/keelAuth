@@ -8,6 +8,7 @@ import { framed, getLang, langName, languages, setLang, t } from "./i18n.js";
 import { Spinner } from "./ui.js";
 import { setZone } from "./time.js";
 import { logoHTML, markSVG } from "./logo.js";
+import { brandName, getBrand, loadBrand, logoURL, onBrand } from "./brand.js";
 import { Overview } from "./overview.js";
 import { Users } from "./users.js";
 import { Groups } from "./groups.js";
@@ -38,7 +39,7 @@ function useHash() {
 }
 
 // LoginPage: keel's login page (left half the form, right half the dark blue with the mark).
-function LoginPage({ children, lang, onLang, th, onTheme }) {
+function LoginPage({ children, lang, onLang, th, onTheme, brand }) {
   return html`<div class="login">
     <div class="login-form">
       <span class="login-mark" dangerouslySetInnerHTML=${{ __html: markSVG }}></span>
@@ -54,7 +55,8 @@ function LoginPage({ children, lang, onLang, th, onTheme }) {
         </select>
       </div>
       <div class="login-water" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: markSVG }}></div>
-      <div class="login-logo" dangerouslySetInnerHTML=${{ __html: logoHTML }}></div>
+      ${brand && brand.logo ? html`<div class="login-logo"><img src=${logoURL()} alt=${brandName(lang) || "keelAuth"} /></div>`
+        : html`<div class="login-logo" dangerouslySetInnerHTML=${{ __html: logoHTML }}></div>`}
     </div>
   </div>`;
 }
@@ -75,7 +77,7 @@ function Login({ onLogin, ...page }) {
       <p class="muted small host">${st.domain || location.hostname}</p><${Unlock} onDone=${() => location.reload()} /><//>`;
   }
   return html`<${LoginPage} ...${page}>
-    <h1>${t("login.to")}</h1>
+    <h1>${t("login.to", brandName(page.lang) || "keelAuth")}</h1>
     <p class="muted small host">${st ? (st.domain || location.hostname) : ""}</p>
     <form class="stack" onSubmit=${submit}>
       <input type="text" autocomplete="username" placeholder=${t("login.user")} required autofocus spellcheck="false" autocapitalize="off"
@@ -132,7 +134,9 @@ function App() {
   const [lang, setLangState] = useState(getLang());
   const [th, setTh] = useState(theme());
   const [status, setStatus] = useState(null);
+  const [brand, setBrand] = useState(getBrand());
   const hash = useHash();
+  useEffect(() => { loadBrand(); return onBrand((b) => setBrand({ ...b })); }, []);
   const onLang = (l) => { setLang(l); setLangState(l); };
   const onTheme = (v) => { try { localStorage.setItem("keelauth.theme", v); } catch (_) { /* none */ } applyTheme(v); setTh(v); };
   const got = (s) => { setCSRF(s.csrf); setZone(s.timezone); setSession(s); };
@@ -147,8 +151,8 @@ function App() {
     const id = setInterval(load, 30000);
     return () => clearInterval(id);
   }, [session, hash]);
-  useEffect(() => { document.title = status ? "keelAuth · " + status.domain : "keelAuth"; }, [status]);
-  const page = { lang, onLang, th, onTheme };
+  useEffect(() => { document.title = (brandName(lang) || "keelAuth") + (status ? " · " + status.domain : ""); }, [status, brand, lang]);
+  const page = { lang, onLang, th, onTheme, brand };
   if (session === undefined) return html`<${Spinner} />`;
   if (session === null) return html`<${Login} onLogin=${got} ...${page} />`;
   const logout = async () => { try { await api("POST", "logout"); } catch (_) { /* gone anyway */ } setSession(null); };
@@ -172,7 +176,8 @@ function App() {
       <main key=${lang}>${body}</main></div>`;
   }
   return html`<header class="top"><div class="top-in">
-      <a class="brand" href="#/" dangerouslySetInnerHTML=${{ __html: logoHTML }}></a>
+      ${brand.logo ? html`<a class="brand" href="#/"><img src=${logoURL()} alt=${brandName(lang) || "keelAuth"} /></a>`
+        : html`<a class="brand" href="#/" dangerouslySetInnerHTML=${{ __html: logoHTML }}></a>`}
       <${Nav} hash=${hash} alerts=${status ? status.alerts : 0} />
       <span class="spacer"></span>
       <span class="muted top-host" title=${status ? status.hostname : ""}>${status ? status.domain : ""}</span>

@@ -118,11 +118,33 @@ rm -rf $MNT/usr/local/lib/python3* $MNT/usr/local/lib/perl5 $MNT/usr/local/lib/f
     $MNT/usr/local/bin/radsqlrelay $MNT/usr/local/bin/rad_counter $MNT/usr/local/bin/radsecret
 # documentation, manuals, headers, static libraries, examples (raddb is copied already), locales
 rm -rf $MNT/usr/local/share/doc $MNT/usr/local/share/man $MNT/usr/local/man $MNT/usr/local/share/examples \
-    $MNT/usr/local/include $MNT/usr/local/share/locale $MNT/usr/local/share/licenses \
+    $MNT/usr/local/include $MNT/usr/local/share/locale \
     $MNT/usr/share/doc $MNT/usr/share/man $MNT/usr/share/examples $MNT/usr/share/games $MNT/usr/include \
     $MNT/usr/share/i18n $MNT/usr/lib/debug $MNT/usr/tests
 find $MNT/usr/share/locale -mindepth 1 -maxdepth 1 ! -name C.UTF-8 ! -name 'en_US.UTF-8' -exec rm -rf {} + 2>/dev/null || true
 find $MNT/usr/lib $MNT/lib $MNT/usr/local/lib -name '*.a' -delete
+# licence notices (keelOS docs/45 C): the packages of this image with their licences, the written offer
+# of source code; the packages' own licence files in /usr/local/share/licenses stay. The list is also
+# printed for the log (tools/licenses/pkglist-from-log.sh), the source bundle is made from it.
+DOCD=$MNT/usr/local/share/doc/keelauth
+mkdir -p $DOCD
+$PKG query '%n\t%v\t%o\t%L\t%l' | sort > $DOCD/packages.txt
+cat > $DOCD/README.txt <<'EOT'
+keelAuth: third-party software and source code
+==============================================
+This image is FreeBSD (base packages) plus FreeBSD ports packages, each under its own licence:
+packages.txt lists every package with its version, port and licence; the licence files are in
+/usr/local/share/licenses. Some are under the GNU GPL, LGPL or the Mozilla Public License.
+kanidmd is our fork of Kanidm (MPL-2.0): source https://github.com/keelos-dev/kanidm (the tag named in
+/usr/local/etc/kanidm/keelos-fork.version). FreeRADIUS is GPL-2.0.
+The complete corresponding source code of those packages, exactly as built (the ports' Makefiles and
+patches, the upstream source files, our build options), is published for every version at
+https://keelos.dev/sources/ as keelauth-<version>-sources.tar.xz, and kept for at least three years
+after we last distribute that version (GPLv2 section 3 equivalent access; GPLv3 section 6; LGPL).
+If you cannot download it, write to hello@keelos.dev with the version and we will send it on a
+physical medium for the cost of doing so.
+EOT
+echo PACKAGES-BEGIN; cat $DOCD/packages.txt; echo PACKAGES-END
 find $MNT/boot/kernel -name '*.symbols' -delete
 chroot $MNT /bin/sh -c '/sbin/ldconfig -elf /lib /usr/lib /usr/local/lib $(cat /usr/local/libdata/ldconfig/* 2>/dev/null)'
 MISSING=$(chroot $MNT /bin/sh -c 'find /usr/local/bin /usr/local/sbin /usr/local/lib /usr/local/libexec /usr/bin /usr/sbin /bin /sbin -type f \( -perm -u+x -o -name "*.so*" \) 2>/dev/null | xargs ldd 2>/dev/null' | grep "not found" | sed 's/ (.*//' | sort -u || true)

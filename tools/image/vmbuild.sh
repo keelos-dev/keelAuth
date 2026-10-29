@@ -36,6 +36,11 @@ if [ -n "${KA_KANIDMD:-}" ] && [ -x "$KA_KANIDMD" ]; then
     cp "$KA_KANIDMD" "$W/img/files/kanidmd"
     echo "${KA_KANIDMD_VERSION:-unknown}" > "$W/img/files/kanidmd.version"
     echo "kanidmd: $KA_KANIDMD (${KA_KANIDMD_VERSION:-unknown})"
+elif [ -z "${KA_PORT_KANIDMD:-}" ]; then
+    # the port's kanidmd refuses an IP origin (docs/02 section 7.14): an instance keel deployed
+    # by address never comes up with it (seen 2026-10-28). Say so instead of building.
+    echo "vmbuild.sh: KA_KANIDMD (the forked kanidmd binary) is not set; KA_PORT_KANIDMD=1 builds with the port's anyway" >&2
+    exit 1
 fi
 if [ -x "$REPO/keelauthd/keelauthd" ]; then
     cp "$REPO/keelauthd/keelauthd" "$W/img/files/keelauthd"
@@ -55,4 +60,6 @@ $SSH "sh /root/img/build.sh vtbd1 $VER $KEYARG" > "$OUT/build-$VER.log" 2>&1 || 
     tail -20 "$OUT/build-$VER.log"; echo "build failed: $OUT/build-$VER.log"; exit 1; }
 grep '^== \|^files:' "$OUT/build-$VER.log" | tail -6
 echo "$VER" > "$OUT/version"
+# the image's package list for the source bundle (keelOS tools/licenses/sources.sh, docs/45 C)
+sed -n '/^PACKAGES-BEGIN$/,/^PACKAGES-END$/p' "$OUT/build-$VER.log" | sed '1d;$d' | tr -d '\r' > "$OUT/keelauth-$VER.packages.txt"
 echo "built $VER"

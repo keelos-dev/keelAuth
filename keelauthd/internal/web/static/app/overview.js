@@ -4,9 +4,12 @@ import { api, html } from "./api.js";
 import { fmtTime, t, tr } from "./i18n.js";
 import { KV, Spinner } from "./ui.js";
 
-function Alerts() {
+// Alerts follows the status (every 30 seconds, main.js): asked once at the first look it kept
+// saying "radiusd is not up" from the seconds after an upgrade while the tile next to it
+// already said running (user, 2026-10-30).
+function Alerts({ status }) {
   const [as, setAs] = useState(null);
-  useEffect(() => { api("GET", "v1/alerts").then((r) => setAs(r.alerts || [])).catch(() => setAs([])); }, []);
+  useEffect(() => { api("GET", "v1/alerts").then((r) => setAs(r.alerts || [])).catch(() => setAs([])); }, [status]);
   if (!as || as.length === 0) return null;
   return html`<div class="card"><div class="row-head"><h3>${t("ov.alerts")}</h3></div>
     ${as.map((a) => html`<p class=${a.level === "error" ? "error" : "warn"}>${tr("alert." + a.code, a.text, a.object)}</p>`)}</div>`;
@@ -31,7 +34,7 @@ export function Overview({ status }) {
         <${KV} k=${t("ov.lastbackup")} v=${s.last_backup ? fmtTime(s.last_backup) : t("ov.never")} />
         <${KV} k=${t("ov.mk")} v=${mk.slots.includes("keel") ? t("gen.mkkeel") : mk.slots.includes("passphrase") ? t("gen.mkpass", fmtTime(mk.passphrase_set)) : t("gen.mknone")} />
       </div></div>
-    <${Alerts} />
+    <${Alerts} status=${status} />
     <div class="tiles">
       <div class="card"><div class="row-head"><h3>${t("ov.services")}</h3></div>
         <table class="kv-table"><tbody>

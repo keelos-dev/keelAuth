@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -118,6 +119,8 @@ func (s *Server) getStatus(r *http.Request) (any, error) {
 		"counts":         counts, "last_backup": st.LastBackup, "alerts": len(s.Alerts()), "fingerprint": s.Fingerprint(),
 		"ldap_port": st.LDAPPort, "radius_port": RadiusPort, "kanidm_port": KanidmPort,
 	}
+	minLen, strength := st.PasswordPolicy()
+	out["password_policy"] = map[string]any{"min_length": minLen, "strength": strength}
 	if k := s.keelStatus(); k != nil {
 		out["keel"] = k
 	}
@@ -136,8 +139,10 @@ func (s *Server) settingsOut(r *http.Request) map[string]any {
 		tz = "UTC"
 	}
 	mode, _, _, _ := s.OriginInfo()
+	minLen, strength := st.PasswordPolicy()
 	return map[string]any{"domain": st.Domain, "origin": s.Origin(), "origin_mode": mode, "https_listen": st.HTTPSListen,
 		"backup_keep": st.BackupKeep, "ldap_port": st.LDAPPort, "fingerprint": s.Fingerprint(),
+		"password_min_length": minLen, "password_strength": strength,
 		// timezone: keelAuth's own (standalone); managed by keel the page uses keel's (timezone_in_use)
 		"timezone": tz, "timezone_in_use": s.zoneFor(r), "timezone_from_keel": s.managed(),
 		"master_key": s.masterKeyInfo(), "brand": st.Brand.out()}
@@ -147,11 +152,40 @@ func (s *Server) getSettings(r *http.Request) (any, error) { return s.settingsOu
 
 func (s *Server) putSettings(r *http.Request) (any, error) {
 	var req struct {
-		BackupKeep *int    `json:"backup_keep"`
-		Timezone   *string `json:"timezone"`
+		BackupKeep        *int    `json:"backup_keep"`
+		Timezone          *string `json:"timezone"`
+		PasswordMinLength *int    `json:"password_min_length"`
+		PasswordStrength  *string `json:"password_strength"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
+	}
+	// the password rules go to Kanidm's config.toml; a change restarts kanidmd (a few seconds)
+	if req.PasswordMinLength != nil || req.PasswordStrength != nil {
+		if req.PasswordMinLength != nil && (*req.PasswordMinLength < 10 || *req.PasswordMinLength > 64) {
+			return nil, bad("password_min_length: 10 to 64")
+		}
+		if req.PasswordStrength != nil {
+			if _, ok := passwordScores[*req.PasswordStrength]; !ok {
+				return nil, bad("password_strength: strict, normal or length")
+			}
+		}
+		if err := s.update(func(st *State) error {
+			if req.PasswordMinLength != nil {
+				st.PasswordMinLength = *req.PasswordMinLength
+			}
+			if req.PasswordStrength != nil {
+				st.PasswordStrength = *req.PasswordStrength
+			}
+			return nil
+		}, false); err != nil {
+			return nil, err
+		}
+		if s.Real {
+			if err := s.StartKanidm(false); err != nil {
+				return nil, fmt.Errorf("kanidmd: %v", err)
+			}
+		}
 	}
 	if req.Timezone != nil {
 		z := *req.Timezone

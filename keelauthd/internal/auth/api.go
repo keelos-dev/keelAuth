@@ -273,6 +273,7 @@ func (s *Server) buildHandler() http.Handler {
 	a("POST /v1/backups", s.postBackup)
 	a("POST /v1/backups/upload", s.postUpload)
 	m.HandleFunc("GET /v1/backups/{name}", s.need(s.admin, http.HandlerFunc(s.getBackupFile)))
+	m.HandleFunc("GET /v1/support-bundle", s.need(s.adminPerson, http.HandlerFunc(s.getSupportBundle)))
 	a("POST /v1/backups/{name}/restore", s.postRestore)
 	a("PUT /v1/recovery", s.putRecovery)
 	a("GET /v1/alerts", s.getAlerts)
@@ -352,6 +353,14 @@ func (s *Server) loggedIn(c *Caller) error {
 		return nil
 	}
 	return coded(http.StatusUnauthorized, "login", "log in first")
+}
+
+// adminPerson: an administrator in the web or keel, not an API key (logs are for people).
+func (s *Server) adminPerson(c *Caller) error {
+	if c.Kind == kindAPI {
+		return coded(http.StatusForbidden, "scope", "an API key cannot fetch the support bundle: do that in the web page")
+	}
+	return s.admin(c)
 }
 
 func (s *Server) admin(c *Caller) error {

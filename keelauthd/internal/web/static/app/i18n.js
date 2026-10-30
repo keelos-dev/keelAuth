@@ -18,6 +18,7 @@ const dict = {
     "login.to": "Log in to {0}", "login.user": "User name", "login.password": "Password", "login.button": "Log in",
     "login.hint": "Your keelAuth account. Administrators (group keelauth-admins) manage keelAuth here; everybody else can change their own password.",
     "login.noadmin": "keelAuth has no administrator yet: make one in keelOS's Accounts tab, or with keelauthd admin NAME on the VM's console.",
+    "login.keelover": "Your keelOS login has ended. Log in to keelOS again.", "login.keelagain": "Log in again",
     "srv.bad_login": "Wrong user name or password.", "srv.disabled": "This account is disabled.", "srv.too_many": "Too many failed logins. Wait a few minutes.",
     "srv.csrf": "The page is out of date: reload it.", "srv.not_admin": "Only members of keelauth-admins may do this.", "srv.login": "Log in first.",
     "srv.bad_password": "The current password is wrong.", "srv.must_change": "Change your password first.", "srv.weak_password": "keelAuth does not accept this password",
@@ -47,7 +48,7 @@ const dict = {
     "pw.change": "Change password", "pw.changed": "Password changed", "pw.mismatch": "The two new passwords differ.",
     "pw.must": "An administrator set your password: choose your own now.",
     "pw.useronly": "Only administrators manage keelAuth; here you can change your own password.",
-    "pw.rules": "At least 10 characters and not easy to guess (no common words or simple patterns). It is the password for LDAP, SSO, Wi-Fi and shares alike.",
+    "pw.rules": "At least {0} characters{1}. It is the password for LDAP, SSO, Wi-Fi and shares alike.",
     "groups.group": "group", "groups.new": "New group", "groups.add": "Add group", "groups.name": "Group name", "groups.desc": "Description", "groups.members": "Members",
     "groups.edit": "Edit {0}", "groups.builtin": "built in", "groups.admindesc": "keelAuth's administrators",
     "groups.adminnote": "Members of keelauth-admins manage keelAuth. The last one cannot be removed.",
@@ -93,8 +94,8 @@ const dict = {
     "lock.input": "Recovery key (KAR1-…) or recovery passphrase", "lock.button": "Unlock", "lock.hint": "keelOS: Accounts → Recovery key shows the recovery key of a keelAuth it manages; a standalone keelAuth uses the passphrase set under Settings → General.",
     "srv.locked": "keelAuth is locked: give its recovery key or passphrase first.", "srv.need_recovery_key": "This backup was made by another keelAuth: give its recovery key (keelOS: Accounts → Recovery key) or its recovery passphrase.",
     "srv.bad_key": "This recovery key or passphrase does not fit.",
-    "gen.tz": "Time zone", "gen.tzkeel": "{0} (keelOS's setting)", "gen.tzfor": "Times on this page are shown in this zone (where the office is), not in the browser's.",
-    "gen.tztitle": "Time zone", "gen.mk": "Password hash protection", "gen.mkkeel": "wrapped with keelOS's key", "gen.mkpass": "wrapped with the recovery passphrase (set {0})",
+    "gen.support": "Diagnostics", "gen.supportdl": "Download the support bundle", "gen.supportnote": "A tar.gz with keelauthd's and kanidmd's logs, status, services and processes; secrets are blanked. Send it with a fault report.", "gen.tz": "Time zone", "gen.tzkeel": "{0} (keelOS's setting)", "gen.tzfor": "Times on this page are shown in this zone (where the office is), not in the browser's.",
+    "gen.pw": "Password rules", "gen.pwvalue": "at least {0} characters, {1}", "gen.pw.strict": "strict (very hard to guess)", "gen.pw.normal": "normal (hard to guess)", "gen.pw.length": "length only", "gen.pwtitle": "Password rules", "gen.pwlen": "Minimum length (10 to 64)", "gen.pwstrength": "Strength", "gen.pwnote": "Applies to new passwords of every user: LDAP, SSO, Wi-Fi and shares alike. Kanidm's own rule is 15 characters and \"very hard to guess\". A password never contains the user's own name or address, and common passwords are refused whatever the setting. Saving restarts the account service for a few seconds.", "gen.pwlenbad": "The minimum length is 10 to 64.", "gen.pwsaved": "Password rules saved", "pw.guess": " and not easy to guess (no common words or simple patterns)", "gen.tztitle": "Time zone", "gen.mk": "Password hash protection", "gen.mkkeel": "wrapped with keelOS's key", "gen.mkpass": "wrapped with the recovery passphrase (set {0})",
     "gen.mknone": "not protected: set a recovery passphrase", "gen.setpass": "Set recovery passphrase", "gen.changepass": "Change recovery passphrase",
     "gen.passfor": "The Wi-Fi and share password hashes are encrypted with a key that is kept wrapped with this passphrase: a backup alone, or the data disk alone, does not give them away. You need it to restore a backup elsewhere or after a new system disk. Keep it somewhere safe: nobody can recover it.",
     "gen.pass": "Passphrase (at least 12 characters)", "gen.pass2": "Again", "gen.passdiff": "The two passphrases differ.", "gen.passset": "Recovery passphrase set",
@@ -132,6 +133,7 @@ const dict = {
     "login.to": "登录 {0}", "login.user": "用户名", "login.password": "密码", "login.button": "登录",
     "login.hint": "你的 keelAuth 账号。管理员（keelauth-admins 组）在这里管理 keelAuth；其他人可以改自己的密码。",
     "login.noadmin": "keelAuth 还没有管理员：在 keelOS 的“账号”标签里建一个，或在虚拟机控制台上运行 keelauthd admin 名字。",
+    "login.keelover": "keelOS 的登录已结束，请重新登录 keelOS。", "login.keelagain": "重新登录",
     "srv.bad_login": "用户名或密码不对。", "srv.disabled": "这个账号已停用。", "srv.too_many": "登录失败次数太多，请等几分钟。",
     "srv.csrf": "页面过期了，请刷新。", "srv.not_admin": "只有 keelauth-admins 组的人能做这件事。", "srv.login": "请先登录。",
     "srv.bad_password": "当前密码不对。", "srv.must_change": "请先修改密码。", "srv.weak_password": "keelAuth 不接受这个密码",
@@ -161,7 +163,7 @@ const dict = {
     "pw.change": "修改密码", "pw.changed": "密码已修改", "pw.mismatch": "两次输入的新密码不一样。",
     "pw.must": "你的密码是管理员设的：现在换成你自己的。",
     "pw.useronly": "只有管理员能管理 keelAuth；你可以在这里改自己的密码。",
-    "pw.rules": "至少 10 个字符，而且不能太好猜（不用常见的词、简单的规律）。这个密码 LDAP、SSO、Wi-Fi、共享都用。",
+    "pw.rules": "至少 {0} 个字符{1}。这个密码 LDAP、SSO、Wi-Fi、共享都用。",
     "groups.group": "组", "groups.new": "新组", "groups.add": "添加", "groups.name": "组名", "groups.desc": "说明", "groups.members": "成员",
     "groups.edit": "修改 {0}", "groups.builtin": "内置", "groups.admindesc": "keelAuth 的管理员",
     "groups.adminnote": "keelauth-admins 的成员管理 keelAuth。最后一个不能去掉。",
@@ -207,8 +209,8 @@ const dict = {
     "lock.input": "恢复密钥（KAR1-…）或恢复口令", "lock.button": "解锁", "lock.hint": "keelOS 管的 keelAuth：keelOS 的“账号”标签 → 恢复密钥；单独运行的 keelAuth：设置 → 常规里设的恢复口令。",
     "srv.locked": "keelAuth 已锁定：先给出恢复密钥或恢复口令。", "srv.need_recovery_key": "这份备份是另一台 keelAuth 做的：要它的恢复密钥（keelOS：账号 → 恢复密钥）或恢复口令。",
     "srv.bad_key": "这个恢复密钥或口令不对。",
-    "gen.tz": "时区", "gen.tzkeel": "{0}（keelOS 的设置）", "gen.tzfor": "本页的时间按这个时区显示（办公室所在地），不按浏览器的。",
-    "gen.tztitle": "时区", "gen.mk": "密码哈希的保护", "gen.mkkeel": "用 keelOS 的密钥包着", "gen.mkpass": "用恢复口令包着（{0} 设的）",
+    "gen.support": "诊断", "gen.supportdl": "下载诊断包", "gen.supportnote": "一个 tar.gz：keelauthd 和 kanidmd 的日志、状态、服务、进程；密钥已抹掉。报故障时把它一起发来。", "gen.tz": "时区", "gen.tzkeel": "{0}（keelOS 的设置）", "gen.tzfor": "本页的时间按这个时区显示（办公室所在地），不按浏览器的。",
+    "gen.pw": "密码规则", "gen.pwvalue": "至少 {0} 个字符，{1}", "gen.pw.strict": "严格（极难猜）", "gen.pw.normal": "普通（不好猜）", "gen.pw.length": "只看长度", "gen.pwtitle": "密码规则", "gen.pwlen": "最小长度（10～64）", "gen.pwstrength": "强度", "gen.pwnote": "对所有用户以后设的密码生效：LDAP、SSO、Wi-Fi、共享都用它。Kanidm 自己的规则是 15 个字符、极难猜。不管怎么设，密码里都不能含用户自己的名字或邮箱，常见密码一律拒绝。保存会让账号服务重启几秒。", "gen.pwlenbad": "最小长度要在 10～64 之间。", "gen.pwsaved": "密码规则已保存", "pw.guess": "，而且不能太好猜（不用常见的词、简单的规律）", "gen.tztitle": "时区", "gen.mk": "密码哈希的保护", "gen.mkkeel": "用 keelOS 的密钥包着", "gen.mkpass": "用恢复口令包着（{0} 设的）",
     "gen.mknone": "没有保护：请设恢复口令", "gen.setpass": "设恢复口令", "gen.changepass": "换恢复口令",
     "gen.passfor": "Wi-Fi 和共享的密码哈希用一把密钥加密，这把密钥用这个口令包着：单拿到备份或数据盘都看不出哈希。在别处恢复备份、换了系统盘以后都要它。请妥善保管：没有人能找回。",
     "gen.pass": "口令（至少 12 个字符）", "gen.pass2": "再输一次", "gen.passdiff": "两次输入的不一样。", "gen.passset": "恢复口令已设好",
@@ -246,6 +248,7 @@ const dict = {
     "login.to": "{0} にログイン", "login.user": "ユーザー名", "login.password": "パスワード", "login.button": "ログイン",
     "login.hint": "あなたの keelAuth アカウントです。管理者（keelauth-admins グループ）はここで keelAuth を管理し、それ以外の人は自分のパスワードを変更できます。",
     "login.noadmin": "keelAuth にはまだ管理者がいません。keelOS の「アカウント」タブで作るか、VM のコンソールで keelauthd admin 名前 を実行してください。",
+    "login.keelover": "keelOS のログインが終了しました。keelOS にもう一度ログインしてください。", "login.keelagain": "再ログイン",
     "srv.bad_login": "ユーザー名またはパスワードが違います。", "srv.disabled": "このアカウントは無効です。", "srv.too_many": "ログイン失敗が多すぎます。数分待ってください。",
     "srv.csrf": "ページが古くなっています。再読み込みしてください。", "srv.not_admin": "keelauth-admins のメンバーだけが行えます。", "srv.login": "先にログインしてください。",
     "srv.bad_password": "現在のパスワードが違います。", "srv.must_change": "先にパスワードを変更してください。", "srv.weak_password": "keelAuth はこのパスワードを受け付けません",
@@ -275,7 +278,7 @@ const dict = {
     "pw.change": "パスワードを変更", "pw.changed": "パスワードを変更しました", "pw.mismatch": "新しいパスワードが一致しません。",
     "pw.must": "管理者がパスワードを設定しました。今すぐ自分のパスワードを決めてください。",
     "pw.useronly": "keelAuth の管理は管理者だけが行います。ここでは自分のパスワードを変更できます。",
-    "pw.rules": "10 文字以上で、推測されにくいもの（よくある単語や単純なパターンは不可）。LDAP、SSO、Wi-Fi、共有に共通のパスワードです。",
+    "pw.rules": "{0} 文字以上{1}。LDAP、SSO、Wi-Fi、共有に共通のパスワードです。",
     "groups.group": "グループ", "groups.new": "新しいグループ", "groups.add": "グループを追加", "groups.name": "グループ名", "groups.desc": "説明", "groups.members": "メンバー",
     "groups.edit": "{0} を編集", "groups.builtin": "組み込み", "groups.admindesc": "keelAuth の管理者",
     "groups.adminnote": "keelauth-admins のメンバーが keelAuth を管理します。最後の一人は外せません。",
@@ -321,8 +324,8 @@ const dict = {
     "lock.input": "回復キー（KAR1-…）または回復パスフレーズ", "lock.button": "ロック解除", "lock.hint": "keelOS：「アカウント」→「回復キー」に、管理している keelAuth の回復キーがあります。単独運用の keelAuth は「設定 → 一般」で設定したパスフレーズを使います。",
     "srv.locked": "keelAuth はロックされています。先に回復キーかパスフレーズを与えてください。", "srv.need_recovery_key": "このバックアップは別の keelAuth が作ったものです。その回復キー（keelOS：アカウント → 回復キー）か回復パスフレーズを与えてください。",
     "srv.bad_key": "この回復キーまたはパスフレーズは合いません。",
-    "gen.tz": "タイムゾーン", "gen.tzkeel": "{0}（keelOS の設定）", "gen.tzfor": "このページの時刻は、ブラウザーではなくこのゾーン（会社のある場所）で表示します。",
-    "gen.tztitle": "タイムゾーン", "gen.mk": "パスワードハッシュの保護", "gen.mkkeel": "keelOS の鍵で包まれています", "gen.mkpass": "回復パスフレーズで包まれています（{0} に設定）",
+    "gen.support": "診断", "gen.supportdl": "診断パッケージをダウンロード", "gen.supportnote": "keelauthd と kanidmd のログ、状態、サービス、プロセスをまとめた tar.gz です。秘密情報は伏せてあります。障害報告に添えてください。", "gen.tz": "タイムゾーン", "gen.tzkeel": "{0}（keelOS の設定）", "gen.tzfor": "このページの時刻は、ブラウザーではなくこのゾーン（会社のある場所）で表示します。",
+    "gen.pw": "パスワードの規則", "gen.pwvalue": "{0} 文字以上、{1}", "gen.pw.strict": "厳格（非常に推測されにくい）", "gen.pw.normal": "標準（推測されにくい）", "gen.pw.length": "長さのみ", "gen.pwtitle": "パスワードの規則", "gen.pwlen": "最小の長さ（10〜64）", "gen.pwstrength": "強度", "gen.pwnote": "すべてのユーザーが今後設定するパスワードに適用されます（LDAP、SSO、Wi-Fi、共有に共通）。Kanidm 自身の規則は 15 文字・非常に推測されにくいこと。設定にかかわらず、ユーザー自身の名前やメールを含むパスワードと、よくあるパスワードは拒否されます。保存するとアカウントサービスが数秒間再起動します。", "gen.pwlenbad": "最小の長さは 10〜64 です。", "gen.pwsaved": "パスワードの規則を保存しました", "pw.guess": "で、推測されにくいもの（よくある単語や単純なパターンは不可）", "gen.tztitle": "タイムゾーン", "gen.mk": "パスワードハッシュの保護", "gen.mkkeel": "keelOS の鍵で包まれています", "gen.mkpass": "回復パスフレーズで包まれています（{0} に設定）",
     "gen.mknone": "保護されていません：回復パスフレーズを設定してください", "gen.setpass": "回復パスフレーズを設定", "gen.changepass": "回復パスフレーズを変更",
     "gen.passfor": "Wi-Fi と共有のパスワードハッシュは一つの鍵で暗号化され、その鍵はこのパスフレーズで包まれます：バックアップだけ、データディスクだけでは中身は分かりません。別の場所でバックアップを復元するときや、新しいシステムディスクの後に必要です。安全な場所に保管してください：誰にも復元できません。",
     "gen.pass": "パスフレーズ（12 文字以上）", "gen.pass2": "もう一度", "gen.passdiff": "二つのパスフレーズが一致しません。", "gen.passset": "回復パスフレーズを設定しました",
@@ -379,6 +382,13 @@ export function setLang(l) {
 export function t(key, ...args) {
   const s = dict[lang][key] ?? dict.en[key] ?? key;
   return args.length ? s.replace(/\{(\d)\}/g, (_, i) => (args[i] ?? "")) : s;
+}
+
+// pwRules: the password hint for the rules in force (GET /v1/status password_policy; null =
+// Kanidm's defaults).
+export function pwRules(p) {
+  const n = p && p.min_length ? p.min_length : 15;
+  return t("pw.rules", n, !p || p.strength !== "length" ? t("pw.guess") : "");
 }
 
 export function tr(key, fallback, ...args) {

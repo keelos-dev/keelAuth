@@ -94,6 +94,11 @@ type State struct {
 	// Timezone: what the page shows times in when keelAuth runs standalone (keel's own zone
 	// otherwise, keelOS docs/47); "" = UTC.
 	Timezone string `json:"timezone,omitempty"`
+	// PasswordMinLength / PasswordStrength: the password rules Kanidm enforces (our fork reads
+	// them from config.toml, docs/02 §3.14): 10-64 characters (0 = Kanidm's 15) and strict
+	// (zxcvbn score 4, Kanidm's own rule) / normal (3) / length (no strength check; "" = strict).
+	PasswordMinLength int    `json:"password_min_length,omitempty"`
+	PasswordStrength  string `json:"password_strength,omitempty"`
 	// OIDCRoles: per SSO application, what its groups mean there, as the application told us
 	// (keelOS: keel-admins = admin…, PUT /v1/oidc/{name}/roles); the page shows them and offers
 	// to make the missing groups
@@ -246,4 +251,22 @@ func reserved(n string) bool {
 		return true
 	}
 	return len(n) > 4 && n[:4] == "idm_"
+}
+
+// Password rules (State.PasswordMinLength / PasswordStrength, docs/02 §3.14).
+const DefaultPasswordMinLength = 15
+
+// passwordScores: a strength name -> the zxcvbn score our Kanidm fork demands.
+var passwordScores = map[string]int{"strict": 4, "normal": 3, "length": 0}
+
+// PasswordPolicy: the rules in force (defaults for unset).
+func (st *State) PasswordPolicy() (minLength int, strength string) {
+	minLength, strength = st.PasswordMinLength, st.PasswordStrength
+	if minLength == 0 {
+		minLength = DefaultPasswordMinLength
+	}
+	if _, ok := passwordScores[strength]; !ok {
+		strength = "strict"
+	}
+	return
 }

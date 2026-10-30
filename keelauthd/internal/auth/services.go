@@ -75,6 +75,8 @@ func BaseDN(domain string) string {
 // KanidmConfig is Kanidm's config.toml for the state; zfs: the database is on ZFS (Kanidm then
 // uses 64 KiB pages to match the record size; the image makes kadata with recordsize=64K).
 func (s *Server) KanidmConfig(st *State, zfs bool) string {
+	// the password rules (docs/02 §3.14; our fork's keel_password_* keys)
+	minLen, strength := st.PasswordPolicy()
 	fsType := ""
 	if zfs {
 		fsType = "db_fs_type = \"zfs\"\n"
@@ -87,8 +89,10 @@ tls_chain = %q
 tls_key = %q
 domain = %q
 origin = %q
+keel_password_min_length = %d
+keel_password_min_score = %d
 `, KanidmPort, st.LDAPPort, filepath.Join(s.kanidmDir(), "kanidm.db"), filepath.Join(s.tlsDir(), useServerChain),
-		filepath.Join(s.tlsDir(), useServerKey), st.Domain, s.Origin()) + fsType
+		filepath.Join(s.tlsDir(), useServerKey), st.Domain, s.Origin(), minLen, passwordScores[strength]) + fsType
 }
 
 // FSType is the file system type a path is on, from `mount -p` (the longest mount point that
@@ -275,6 +279,9 @@ func (s *Server) bringUp() error {
 	if err != nil {
 		return err
 	}
+	if err := s.reindexOnce(); err != nil {
+		return fmt.Errorf("reindex: %v", err)
+	}
 	if err := s.Eng.Prepare(AdminGroup); err != nil {
 		return fmt.Errorf("prepare: %v", err)
 	}
@@ -282,6 +289,54 @@ func (s *Server) bringUp() error {
 		return fmt.Errorf("ldap bind account: %v", err)
 	}
 	return s.ApplyRadius()
+}
+
+// KanidmVersionFile names the forked kanidmd's commit (tools/image/build.sh); the port's has none.
+const KanidmVersionFile = "/usr/local/etc/kanidm/keelos-fork.version"
+
+func (s *Server) kanidmdVersion() string {
+	if b, err := s.Sys.ReadFile(KanidmVersionFile); err == nil && strings.TrimSpace(string(b)) != "" {
+		return strings.TrimSpace(string(b))
+	}
+	return "port"
+}
+
+// reindexOnce: Kanidm 1.11.0's startup reindex runs before its domain migration adds indexed
+// attributes (UserAuthTokenSession, OAuth2RsScopeMap, ...), so a fresh database lacks those
+// indexes for good: "index ... was not found. YOU MUST REINDEX YOUR DATABASE" in the log, and
+// every search on them is refused as "fully unindexed" (ResourceLimit) - the Kanidm UI's apps
+// page after login answered 500 "Backend" on two production instances and on a fresh test
+// one (2026-10-29). `kanidmd database reindex` (offline) puts the indexes in. So once per
+// kanidmd build (marker in the kanidm directory), after Kanidm came up the first time: stop
+// it, reindex as the kanidmd user, start it again.
+func (s *Server) reindexOnce() error {
+	ver := s.kanidmdVersion()
+	mark := filepath.Join(s.kanidmDir(), ".reindexed")
+	if b, err := s.Sys.ReadFile(mark); err == nil && strings.TrimSpace(string(b)) == ver {
+		return nil
+	}
+	s.Log.Printf("kanidm: reindexing the database once for kanidmd %s", ver)
+	if _, err := s.Sys.Run("", "service", "kanidmd", "onestop"); err != nil {
+		return err
+	}
+	_, err := s.Sys.Run("", "su", "-m", "kanidmd", "-c", KanidmBin+" database reindex -c "+KanidmConf)
+	if _, err2 := s.Sys.Run("", "service", "kanidmd", "onestart"); err == nil {
+		err = err2
+	}
+	if err != nil {
+		return err
+	}
+	for i := 0; i < s.waitTries(); i++ {
+		if err = s.Eng.Ready(); err == nil {
+			break
+		}
+		s.sleep(2 * time.Second)
+	}
+	if err != nil {
+		return err
+	}
+	s.Log.Printf("kanidm: reindexed")
+	return s.Sys.WriteFile(mark, []byte(ver+"\n"), 0o644)
 }
 
 func (s *Server) waitTries() int {

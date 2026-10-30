@@ -146,6 +146,27 @@ func TestBringUp(t *testing.T) {
 	if n := len(out["users"].([]any)); n != 0 {
 		t.Errorf("%d users, want 0 (bind account hidden)", n)
 	}
+	// the one-time offline reindex (reindexOnce): after the first bring-up, not again
+	if !r.sy.Ran("su -m kanidmd -c " + KanidmBin + " database reindex -c " + KanidmConf) {
+		t.Error("no offline reindex at the first bring-up")
+	}
+	if string(r.sy.Files["/data/keelauth/kanidm/.reindexed"]) != "port\n" {
+		t.Errorf("reindex marker: %q", r.sy.Files["/data/keelauth/kanidm/.reindexed"])
+	}
+	r.sy.Reset()
+	if err := r.s.BringUp(); err != nil {
+		t.Fatal(err)
+	}
+	if r.sy.Ran("su -m kanidmd") {
+		t.Error("reindexed again with the marker present")
+	}
+	r.sy.Files[KanidmVersionFile] = []byte("abc1234\n")
+	if err := r.s.BringUp(); err != nil {
+		t.Fatal(err)
+	}
+	if !r.sy.Ran("su -m kanidmd") || string(r.sy.Files["/data/keelauth/kanidm/.reindexed"]) != "abc1234\n" {
+		t.Error("a new kanidmd build must reindex once more")
+	}
 	cfg := r.s.KanidmConfig(st, true)
 	for _, want := range []string{`domain = "auth.office.lan"`, `origin = "https://auth.office.lan:8443"`, `ldapbindaddress = "0.0.0.0:636"`, `db_path = "/data/keelauth/kanidm/kanidm.db"`, `db_fs_type = "zfs"`} {
 		if !strings.Contains(cfg, want) {
@@ -857,5 +878,43 @@ func TestNestedGroups(t *testing.T) {
 		if x.(map[string]any)["name"] == "app-x" && len(x.(map[string]any)["member_groups"].([]any)) != 1 {
 			t.Errorf("deleted group still a member: %v", x)
 		}
+	}
+}
+
+// The password rules (docs/02 §3.14): settings, Kanidm's config.toml, status.
+func TestPasswordPolicySettings(t *testing.T) {
+	r := newRig(t)
+	st := r.s.State()
+	if minLen, strength := st.PasswordPolicy(); minLen != 15 || strength != "strict" {
+		t.Errorf("defaults: %d %s", minLen, strength)
+	}
+	cfg := r.s.KanidmConfig(st, true)
+	for _, want := range []string{"keel_password_min_length = 15\n", "keel_password_min_score = 4\n"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("config.toml lacks %q:\n%s", want, cfg)
+		}
+	}
+	for _, bad := range []map[string]any{{"password_min_length": 9}, {"password_min_length": 65}, {"password_strength": "weird"}} {
+		if code, _, _ := r.call("PUT", "/v1/settings", "", bad); code != 400 {
+			t.Errorf("%v: %d, want 400", bad, code)
+		}
+	}
+	out := r.ok("PUT", "/v1/settings", map[string]any{"password_min_length": 12, "password_strength": "normal"})
+	if out["password_min_length"].(float64) != 12 || out["password_strength"] != "normal" {
+		t.Errorf("settings after PUT: %v", out)
+	}
+	cfg = r.s.KanidmConfig(r.s.State(), true)
+	for _, want := range []string{"keel_password_min_length = 12\n", "keel_password_min_score = 3\n"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("config.toml lacks %q:\n%s", want, cfg)
+		}
+	}
+	pol := r.ok("GET", "/v1/status", nil)["password_policy"].(map[string]any)
+	if pol["min_length"].(float64) != 12 || pol["strength"] != "normal" {
+		t.Errorf("status password_policy: %v", pol)
+	}
+	r.ok("PUT", "/v1/settings", map[string]any{"password_strength": "length"})
+	if cfg = r.s.KanidmConfig(r.s.State(), true); !strings.Contains(cfg, "keel_password_min_score = 0\n") {
+		t.Errorf("length only: %s", cfg)
 	}
 }

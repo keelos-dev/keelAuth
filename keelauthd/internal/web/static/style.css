@@ -773,7 +773,7 @@ label.btn { display: inline-block; font-size: 13px; line-height: 18px; padding: 
 label.btn:hover { border-color: var(--accent); }
 .ka-upload { margin-right: 6px; }
 .row-head a.btn { margin: 0; }
-.tiles table.kv-table td.mono { overflow-wrap: normal; white-space: nowrap; }
+.tiles table.kv-table td.mono { overflow-wrap: anywhere; } /* a long URL breaks inside the tile instead of running out of it (user 2026-10-29: 溢出了) */
 table.kv-table td .btn { margin: 0 0 0 6px; padding: 0 8px; }
 table.data td.nowrap a.btn { margin: 0 4px 0 0; padding: 0 8px; }
 .once .mono { font-size: 13px; user-select: all; }

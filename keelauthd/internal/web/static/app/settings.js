@@ -20,6 +20,27 @@ function ZoneDialog({ zone, onClose, onDone }) {
   <//>`;
 }
 
+// PwPolicyDialog: the password rules (docs/02 §3.14): minimum length 10-64 and the strength
+// Kanidm demands (strict = zxcvbn 4, Kanidm's own; normal = 3; length = none). Saving restarts
+// kanidmd for a few seconds.
+function PwPolicyDialog({ len, strength, onClose, onDone }) {
+  const [n, setN] = useState(String(len));
+  const [k, setK] = useState(strength);
+  const save = async () => {
+    const v = parseInt(n, 10);
+    if (!(v >= 10 && v <= 64)) throw new Error(t("gen.pwlenbad"));
+    await api("PUT", "v1/settings", { password_min_length: v, password_strength: k });
+    toast(t("gen.pwsaved"));
+    onDone();
+  };
+  return html`<${FormDialog} title=${t("gen.pwtitle")} submit=${t("save")} onSubmit=${save} onClose=${onClose}>
+    <label>${t("gen.pwlen")}<input type="number" min="10" max="64" value=${n} onInput=${(e) => setN(e.target.value)} /></label>
+    <label>${t("gen.pwstrength")}<select value=${k} onChange=${(e) => setK(e.target.value)}>
+      ${["strict", "normal", "length"].map((x) => html`<option value=${x}>${t("gen.pw." + x)}</option>`)}</select></label>
+    <p class="muted small">${t("gen.pwnote")}</p>
+  <//>`;
+}
+
 function PassDialog({ onClose, onDone }) {
   const [a, setA] = useState("");
   const [b, setB] = useState("");
@@ -84,11 +105,15 @@ function General() {
       <tr><th>${t("gen.brand")}</th><td>${brandNames(s.brand)}
         <span class="brand-row-logo">${s.brand && s.brand.logo ? html`<img class="brand-preview" src=${logoURL()} alt="" />` : html`<span class="muted">${t("brand.logo")}: ${t("brand.logonone")}</span>`}</span>
         <button class="btn" onClick=${() => setDlg("brand")}>${t("edit")}</button></td></tr>
+      <tr><th>${t("gen.pw")}</th><td>${t("gen.pwvalue", s.password_min_length, t("gen.pw." + s.password_strength))}
+        <button class="btn" onClick=${() => setDlg("pw")}>${t("edit")}</button></td></tr>
+      <tr><th>${t("gen.support")}</th><td>${t("gen.supportnote")}<a class="btn" href=${rel("v1/support-bundle")} download>${t("gen.supportdl")}</a></td></tr>
     </tbody></table>
     <p class="muted small">${s.timezone_from_keel ? t("gen.mkkeelnote") : t("gen.tzfor")}</p>
     ${dlg === "tz" && html`<${ZoneDialog} zone=${s.timezone} onClose=${() => setDlg(null)} onDone=${load} />`}
     ${dlg === "brand" && html`<${BrandDialog} brand=${s.brand || {}} onClose=${() => setDlg(null)} onDone=${() => { setDlg(null); load(); }} />`}
     ${dlg === "pass" && html`<${PassDialog} onClose=${() => setDlg(null)} onDone=${load} />`}
+    ${dlg === "pw" && html`<${PwPolicyDialog} len=${s.password_min_length} strength=${s.password_strength} onClose=${() => setDlg(null)} onDone=${() => { setDlg(null); load(); }} />`}
   </div>`;
 }
 

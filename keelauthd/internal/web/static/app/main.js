@@ -3,7 +3,7 @@
 // always in a dialog; long pages get sub-tabs). Hash routes, relative addresses only.
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { api, html, setCSRF, setLoggedOut } from "./api.js";
+import { api, html, setCSRF, setLoggedOut, underKeel } from "./api.js";
 import { framed, getLang, langName, languages, setLang, t } from "./i18n.js";
 import { Spinner } from "./ui.js";
 import { setZone } from "./time.js";
@@ -154,6 +154,9 @@ function App() {
   useEffect(() => { document.title = (brandName(lang) || "keelAuth") + (status ? " · " + status.domain : ""); }, [status, brand, lang]);
   const page = { lang, onLang, th, onTheme, brand };
   if (session === undefined) return html`<${Spinner} />`;
+  // in keel's frame the login is keel's (api.js underKeel): over means keel's page logs in again
+  if (session === null && underKeel) return html`<div class="card"><p>${t("login.keelover")}</p>
+    <div class="actions"><button class="primary" onClick=${() => { try { window.top.location.reload(); } catch (_) { location.reload(); } }}>${t("login.keelagain")}</button></div></div>`;
   if (session === null) return html`<${Login} onLogin=${got} ...${page} />`;
   const logout = async () => { try { await api("POST", "logout"); } catch (_) { /* gone anyway */ } setSession(null); };
   // not an admin, or a password to change first: only the own password

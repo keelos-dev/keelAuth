@@ -85,6 +85,28 @@ keelauth_data()
 	say "WARNING: no data disk; the accounts are on the system disk ($SYSPOOL/data)."
 }
 
+# /var/log on the data disk: an upgrade replaces the system disk and the logs with it (the
+# first support bundle after one, 2026-10-29, had no line from before it). Made once, copied
+# from the system disk's /var/log, mounted over it on every boot (syslogd is not up yet here).
+keelauth_logs()
+{
+	local moved
+	zpool list -H -o name $DATAPOOL >/dev/null 2>&1 || return 0
+	if ! zfs list -H $DATAPOOL/log >/dev/null 2>&1; then
+		if ! zfs create -o mountpoint=/tmp/kalog -o canmount=noauto $DATAPOOL/log; then
+			say "could not make $DATAPOOL/log; the logs stay on the system disk."
+			return 0
+		fi
+		if zfs mount $DATAPOOL/log; then
+			cp -a /var/log/. /tmp/kalog/
+			zfs umount $DATAPOOL/log
+		fi
+		zfs set mountpoint=/var/log $DATAPOOL/log
+		moved=1
+	fi
+	zfs mount $DATAPOOL/log 2>/dev/null && say "logs on $DATAPOOL/log${moved:+ (moved from the system disk)}."
+}
+
 # Reads the seed's JSON on stdin and prints shell assignments of the checked values.
 keelauth_seed_parse()
 {
@@ -165,6 +187,7 @@ keelauth_start()
 {
 	keelauth_arc
 	keelauth_data
+	keelauth_logs
 	keelauth_seed
 }
 

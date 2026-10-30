@@ -2,8 +2,16 @@
 // once (Shown).
 import { useEffect, useState } from "preact/hooks";
 import { api, html } from "./api.js";
-import { fmtTime, t } from "./i18n.js";
+import { fmtTime, pwRules, t } from "./i18n.js";
 import { ask, Dialog, FormDialog, Spinner, toast } from "./ui.js";
+
+// usePwPolicy: the password rules in force (status.password_policy), for hints and minlength.
+export function usePwPolicy() {
+  const [pol, setPol] = useState(null);
+  useEffect(() => { api("GET", "v1/status").then((x) => setPol(x.password_policy || null)).catch(() => {}); }, []);
+  return pol;
+}
+export const pwMin = (p) => String(p && p.min_length ? p.min_length : 15);
 
 const fail = (e) => toast(e.message, 8000);
 const enc = encodeURIComponent;
@@ -28,6 +36,7 @@ function GroupPicks({ groups, value, onChange }) {
 }
 
 function NewUser({ groups, onClose, onDone }) {
+  const pol = usePwPolicy();
   const [f, setF] = useState({ name: "", display_name: "", mail: "", password: "", auto: true, must_change: true, groups: [] });
   const set = (k) => (e) => { const v = e.target.type === "checkbox" ? e.target.checked : e.target.value; setF((f) => ({ ...f, [k]: v })); };
   const save = async () => {
@@ -41,8 +50,8 @@ function NewUser({ groups, onClose, onDone }) {
     <label>${t("users.display")}<input type="text" value=${f.display_name} onInput=${set("display_name")} /></label>
     <label>${t("users.mail")}<input type="text" inputmode="email" value=${f.mail} onInput=${set("mail")} /></label>
     <label class="check"><input type="checkbox" checked=${f.auto} onChange=${set("auto")} /> ${t("users.autopw")}</label>
-    ${!f.auto && html`<label>${t("users.password")}<input type="password" autocomplete="new-password" minlength="10" required value=${f.password} onInput=${set("password")} />
-      <span class="muted small">${t("pw.rules")}</span></label>`}
+    ${!f.auto && html`<label>${t("users.password")}<input type="password" autocomplete="new-password" minlength=${pwMin(pol)} required value=${f.password} onInput=${set("password")} />
+      <span class="muted small">${pwRules(pol)}</span></label>`}
     <label class="check"><input type="checkbox" checked=${f.must_change} onChange=${set("must_change")} /> ${t("users.mustchange")}</label>
     <${GroupPicks} groups=${groups} value=${f.groups} onChange=${(up) => setF((f) => ({ ...f, groups: up(f.groups) }))} />
   <//>`;
@@ -61,6 +70,7 @@ function EditUser({ user, groups, onClose, onDone }) {
 }
 
 function ResetPassword({ user, onClose, onDone }) {
+  const pol = usePwPolicy();
   const [auto, setAuto] = useState(true);
   const [pw, setPw] = useState("");
   const [must, setMust] = useState(true);
@@ -71,8 +81,8 @@ function ResetPassword({ user, onClose, onDone }) {
   return html`<${FormDialog} title=${t("users.resettitle", user.name)} submit=${t("users.reset")} onSubmit=${save} onClose=${onClose}>
     <p class="muted small">${t("users.resetnote")}</p>
     <label class="check"><input type="checkbox" checked=${auto} onChange=${(e) => setAuto(e.target.checked)} /> ${t("users.autopw")}</label>
-    ${!auto && html`<label>${t("users.password")}<input type="password" autocomplete="new-password" minlength="10" required value=${pw} onInput=${(e) => setPw(e.target.value)} />
-      <span class="muted small">${t("pw.rules")}</span></label>`}
+    ${!auto && html`<label>${t("users.password")}<input type="password" autocomplete="new-password" minlength=${pwMin(pol)} required value=${pw} onInput=${(e) => setPw(e.target.value)} />
+      <span class="muted small">${pwRules(pol)}</span></label>`}
     <label class="check"><input type="checkbox" checked=${must} onChange=${(e) => setMust(e.target.checked)} /> ${t("users.mustchange")}</label>
   <//>`;
 }

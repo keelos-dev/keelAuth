@@ -885,16 +885,16 @@ func TestNestedGroups(t *testing.T) {
 func TestPasswordPolicySettings(t *testing.T) {
 	r := newRig(t)
 	st := r.s.State()
-	if minLen, strength := st.PasswordPolicy(); minLen != 15 || strength != "strict" {
+	if minLen, strength := st.PasswordPolicy(); minLen != 8 || strength != "length" {
 		t.Errorf("defaults: %d %s", minLen, strength)
 	}
 	cfg := r.s.KanidmConfig(st, true)
-	for _, want := range []string{"keel_password_min_length = 15\n", "keel_password_min_score = 4\n"} {
+	for _, want := range []string{"keel_password_min_length = 8\n", "keel_password_min_score = 0\n"} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("config.toml lacks %q:\n%s", want, cfg)
 		}
 	}
-	for _, bad := range []map[string]any{{"password_min_length": 9}, {"password_min_length": 65}, {"password_strength": "weird"}} {
+	for _, bad := range []map[string]any{{"password_min_length": 7}, {"password_min_length": 65}, {"password_strength": "weird"}} {
 		if code, _, _ := r.call("PUT", "/v1/settings", "", bad); code != 400 {
 			t.Errorf("%v: %d, want 400", bad, code)
 		}

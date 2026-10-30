@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"keelauth/internal/engine"
+	"keelauth/internal/module/oidc"
 	"keelauth/internal/secret"
 	"keelauth/internal/sys"
 )
@@ -63,6 +64,7 @@ type Server struct {
 	// API answers 503 "starting" meanwhile (keel retries), not answers from a half-made engine
 	starting atomic.Bool
 
+	oidcSrv  *oidc.Server // the oidc module's provider (native engine; oidcmod.go)
 	sessions *sessions
 	backupMu sync.Mutex
 	hOnce    sync.Once
@@ -147,6 +149,13 @@ func (s *Server) Serve(socket string) error {
 		return fmt.Errorf("master key: %v", err)
 	}
 	s.dropStoredKey()
+	s.bindNative()
+	if k := s.State().Engine; k == "" { // fixed at the first start: a later default does not move it
+		kind := s.engineKind()
+		if err := s.update(func(st *State) error { st.Engine = kind; return nil }, false); err != nil {
+			return err
+		}
+	}
 	if sd == nil {
 		s.Log.Printf("no seed disk: keelAuth is NOT managed by keel (standalone); manage it on https://<LAN address>/, " +
 			"first admin with \"keelauthd admin NAME\" on the console")
@@ -174,6 +183,12 @@ func (s *Server) Serve(socket string) error {
 		go s.serveTCP(st.HTTPSListen, h, &tls.Config{GetCertificate: s.serverCert, MinVersion: tls.VersionTLS12})
 		// http://<address>/ typed into a browser lands on the page too (keel does the same)
 		go s.serveKind(DefaultHTTP, redirectHandler(st.HTTPSListen), nil, "HTTP, redirects to HTTPS")
+	}
+	if s.Real && s.engineKind() == EngineNative {
+		if st.LDAPPort > 0 {
+			go s.serveLDAP(st.LDAPPort) // the ldap module (ldapmod.go); Kanidm serves LDAP itself otherwise
+		}
+		go s.serveOIDC(KanidmPort) // the oidc module (oidcmod.go) on the origin's port
 	}
 	go func() {
 		<-s.unlockedCh // a locked master key: nothing works until it is given (POST /unlock)
@@ -219,9 +234,14 @@ func (s *Server) linkKey() string {
 	return s.seed.Key
 }
 
-// hasEngineDB: Kanidm's database exists (so the domain is fixed).
+// hasEngineDB: the engine's data exists (so the domain is fixed): Kanidm's database, or the
+// native store's file.
 func (s *Server) hasEngineDB() bool {
-	_, err := os.Stat(s.kanidmDir() + "/kanidm.db")
+	p := s.kanidmDir() + "/kanidm.db"
+	if n := s.native(); n != nil {
+		p = n.Path()
+	}
+	_, err := os.Stat(p)
 	return err == nil
 }
 

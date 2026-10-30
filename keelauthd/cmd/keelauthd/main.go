@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	_ "time/tzdata" // zone names are checked here too (the image's zoneinfo may be trimmed)
@@ -60,16 +61,33 @@ func main() {
 func serve() {
 	lg := log.New(os.Stdout, "", log.LstdFlags)
 	var srv *auth.Server
-	eng := engine.NewKanidm(fmt.Sprintf("https://127.0.0.1:%d", auth.KanidmPort), "", func() (string, error) {
-		return srv.AdminPassword()
-	})
+	var eng engine.Engine
+	seedEngine := ""
+	if sd, _ := auth.FindSeed(sys.Real{}, sys.Real{}, lg); sd != nil {
+		seedEngine = sd.Engine
+	}
+	kind := auth.ChooseEngine(sys.Real{}, auth.DataDir, seedEngine, os.Getenv("KEELAUTHD_ENGINE"))
+	switch kind {
+	case auth.EngineNative:
+		n, err := engine.NewNative(filepath.Join(auth.DataDir, auth.AccountsFile))
+		if err != nil {
+			lg.Fatalf("keelauthd: accounts: %v", err)
+		}
+		eng = n
+	default:
+		k := engine.NewKanidm(fmt.Sprintf("https://127.0.0.1:%d", auth.KanidmPort), "", func() (string, error) {
+			return srv.AdminPassword()
+		})
+		k.Recover = func() error {
+			lg.Printf("idm_admin's password was refused: recovering a new one")
+			return srv.RecoverAdmin()
+		}
+		eng = k
+	}
+	lg.Printf("keelauthd %s: account engine %s", version, kind)
 	srv, err := auth.NewServer(sys.Real{}, eng, auth.DataDir, version, lg)
 	if err != nil {
 		lg.Fatalf("keelauthd: %v", err)
-	}
-	eng.Recover = func() error {
-		lg.Printf("idm_admin's password was refused: recovering a new one")
-		return srv.RecoverAdmin()
 	}
 	srv.Heads = sys.Real{}
 	srv.Real = true

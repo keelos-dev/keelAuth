@@ -43,6 +43,18 @@ type UserData struct {
 	NT         string `json:"nt,omitempty"` // sealed NT hash
 	SetAt      string `json:"password_set_at,omitempty"`
 	MustChange bool   `json:"must_change,omitempty"`
+	// Access: the services the account may use (access.go); AccessSet false = everything.
+	Access    []string `json:"access,omitempty"`
+	AccessSet bool     `json:"access_set,omitempty"`
+	// MailDomains: the mail domains ticked for the account (maildomains.go): a mailbox
+	// <name>@<domain> at each.
+	MailDomains []string `json:"mail_domains,omitempty"`
+}
+
+// GroupData is what keelauthd keeps of a group beside the engine: the services its members
+// may use (added to their own).
+type GroupData struct {
+	Access []string `json:"access,omitempty"`
 }
 
 // RadiusClient is an AP or VPN gateway allowed to ask FreeRADIUS.
@@ -68,6 +80,8 @@ type Token struct {
 	Created  string `json:"created"`
 	LastUsed string `json:"last_used,omitempty"`
 	Scope    string `json:"scope,omitempty"`
+	// MailDomains: what a sync key's mail server offers (maildomains.go).
+	MailDomains []string `json:"mail_domains,omitempty"`
 }
 
 // State is keelauthd's own data. Accounts themselves are in the engine.
@@ -76,27 +90,31 @@ type State struct {
 	// Key: the internal link key. Only read from old state.json files (keelauthd before the
 	// master key was wrapped kept the seed's key here): the seed carries it, and on the data
 	// disk it would open master.wrap. Cleared at the start (masterkey.go).
-	Key         string               `json:"key,omitempty"`
-	Listen      string               `json:"listen"`       // internal link HTTP listener; "" = none
-	HTTPSListen string               `json:"https_listen"` // the LAN web page
-	Domain      string               `json:"domain"`       // Kanidm's domain, fixed at the first start
-	LDAPPort    int                  `json:"ldap_port"`
-	Admin       string               `json:"idm_admin,omitempty"` // sealed idm_admin password
-	Users       map[string]*UserData `json:"users"`
-	Radius      Radius               `json:"radius"`
-	BindPW      string               `json:"ldap_bind,omitempty"` // sealed password of BindAccount
-	Tokens      []Token              `json:"tokens"`
-	SyncKeys    []Token              `json:"sync_keys"`
-	APIKeys     []Token              `json:"api_keys"`
-	Revision    int64                `json:"revision"`
-	BackupKeep  int                  `json:"backup_keep"`
-	LastBackup  string               `json:"last_backup,omitempty"`
+	Key         string `json:"key,omitempty"`
+	Listen      string `json:"listen"`       // internal link HTTP listener; "" = none
+	HTTPSListen string `json:"https_listen"` // the LAN web page
+	Domain      string `json:"domain"`       // Kanidm's domain, fixed at the first start
+	// Engine: which account engine holds the accounts, fixed at the first start (engine.go):
+	// EngineKanidm (Kanidm in the VM) or EngineNative (keelauthd's own store, accounts.json).
+	Engine     string                `json:"engine,omitempty"`
+	LDAPPort   int                   `json:"ldap_port"`
+	Admin      string                `json:"idm_admin,omitempty"` // sealed idm_admin password
+	Users      map[string]*UserData  `json:"users"`
+	Groups     map[string]*GroupData `json:"groups,omitempty"`
+	Radius     Radius                `json:"radius"`
+	BindPW     string                `json:"ldap_bind,omitempty"` // sealed password of BindAccount
+	Tokens     []Token               `json:"tokens"`
+	SyncKeys   []Token               `json:"sync_keys"`
+	APIKeys    []Token               `json:"api_keys"`
+	Revision   int64                 `json:"revision"`
+	BackupKeep int                   `json:"backup_keep"`
+	LastBackup string                `json:"last_backup,omitempty"`
 	// Timezone: what the page shows times in when keelAuth runs standalone (keel's own zone
 	// otherwise, keelOS docs/47); "" = UTC.
 	Timezone string `json:"timezone,omitempty"`
 	// PasswordMinLength / PasswordStrength: the password rules Kanidm enforces (our fork reads
-	// them from config.toml, docs/02 §3.14): 10-64 characters (0 = Kanidm's 15) and strict
-	// (zxcvbn score 4, Kanidm's own rule) / normal (3) / length (no strength check; "" = strict).
+	// them from config.toml, docs/02 §3.14): 8-64 characters (0 = 8) and strict (zxcvbn score 4,
+	// Kanidm's own rule) / normal (3) / length (no strength check; "" = length, the default).
 	PasswordMinLength int    `json:"password_min_length,omitempty"`
 	PasswordStrength  string `json:"password_strength,omitempty"`
 	// OIDCRoles: per SSO application, what its groups mean there, as the application told us
@@ -138,6 +156,9 @@ func (s *State) normalize() {
 	if s.Users == nil {
 		s.Users = map[string]*UserData{}
 	}
+	if s.Groups == nil {
+		s.Groups = map[string]*GroupData{}
+	}
 	if s.Radius.Clients == nil {
 		s.Radius.Clients = []RadiusClient{}
 	}
@@ -161,11 +182,22 @@ func (s *State) Clone() *State {
 	c.Users = map[string]*UserData{}
 	for k, v := range s.Users {
 		u := *v
+		u.Access = slices.Clone(v.Access)
+		u.MailDomains = slices.Clone(v.MailDomains)
 		c.Users[k] = &u
+	}
+	c.Groups = map[string]*GroupData{}
+	for k, v := range s.Groups {
+		g := *v
+		g.Access = slices.Clone(v.Access)
+		c.Groups[k] = &g
 	}
 	c.Radius.Clients = slices.Clone(s.Radius.Clients)
 	c.Tokens = slices.Clone(s.Tokens)
 	c.SyncKeys = slices.Clone(s.SyncKeys)
+	for i := range c.SyncKeys {
+		c.SyncKeys[i].MailDomains = slices.Clone(s.SyncKeys[i].MailDomains)
+	}
 	c.APIKeys = slices.Clone(s.APIKeys)
 	c.Devices = slices.Clone(s.Devices)
 	if s.OIDCRoles != nil {
@@ -253,8 +285,13 @@ func reserved(n string) bool {
 	return len(n) > 4 && n[:4] == "idm_"
 }
 
-// Password rules (State.PasswordMinLength / PasswordStrength, docs/02 §3.14).
-const DefaultPasswordMinLength = 15
+// Password rules (State.PasswordMinLength / PasswordStrength, docs/02 §3.14). The defaults
+// are a length people can remember and nothing else (user 2026-10-30: complexity rules are
+// "反人类"; brute force is kept out by throttling and the second factor, docs/01).
+const (
+	DefaultPasswordMinLength = 8
+	DefaultPasswordStrength  = "length"
+)
 
 // passwordScores: a strength name -> the zxcvbn score our Kanidm fork demands.
 var passwordScores = map[string]int{"strict": 4, "normal": 3, "length": 0}
@@ -266,7 +303,7 @@ func (st *State) PasswordPolicy() (minLength int, strength string) {
 		minLength = DefaultPasswordMinLength
 	}
 	if _, ok := passwordScores[strength]; !ok {
-		strength = "strict"
+		strength = DefaultPasswordStrength
 	}
 	return
 }

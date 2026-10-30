@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"regexp"
 	"slices"
 	"strings"
+
+	"keelauth/internal/sys"
 )
 
 // The seed disk (docs/02 section 4, as keelNAS's docs/04 section 10.1): keelOS gives a new
@@ -46,6 +49,9 @@ type Seed struct {
 	// Origin: "ip" = Kanidm's origin host is the fixed LAN address (docs/02 section 7.14),
 	// "domain" or "" = the domain.
 	Origin string `json:"origin,omitempty"`
+	// Engine: the account engine for a new keelAuth (engine.go): "native" (keelauthd's own
+	// store) or "kanidm"; "" = the default. Read only when there is no account data yet.
+	Engine string `json:"engine,omitempty"`
 	// RegisterPath: where to register with keel; "" = DefaultRegisterPath.
 	RegisterPath string `json:"register_path,omitempty"`
 	// Timezone: keel's time zone when it made the seed (keelOS docs/47); keel's answers to the
@@ -201,12 +207,17 @@ func AdoptSeed(st *State, sd *Seed, fresh bool) bool {
 // first seed found and its disk. The system and data disks start with a partition table, so
 // they are never mistaken for one.
 func (s *Server) findSeed() (*Seed, string) {
-	if s.Heads == nil {
+	return FindSeed(s.Sys, s.Heads, s.Log)
+}
+
+// FindSeed looks for the seed disk (nil heads: no lookup).
+func FindSeed(sy sys.Sys, heads sys.HeadReader, lg *log.Logger) (*Seed, string) {
+	if heads == nil {
 		return nil, ""
 	}
-	out, err := s.Sys.Run("", "sysctl", "-n", "kern.disks")
+	out, err := sy.Run("", "sysctl", "-n", "kern.disks")
 	if err != nil {
-		s.Log.Printf("seed: cannot list the disks: %v", err)
+		lg.Printf("seed: cannot list the disks: %v", err)
 		return nil, ""
 	}
 	disks := strings.Fields(out)
@@ -217,7 +228,7 @@ func (s *Server) findSeed() (*Seed, string) {
 		if strings.HasPrefix(d, "cd") {
 			continue
 		}
-		b, err := s.Heads.ReadHead(d, SeedSize)
+		b, err := heads.ReadHead(d, SeedSize)
 		if err != nil {
 			continue
 		}
@@ -225,9 +236,9 @@ func (s *Server) findSeed() (*Seed, string) {
 		switch {
 		case errors.Is(err, ErrNotSeed):
 		case err != nil:
-			s.Log.Printf("seed on %s ignored: %v", d, err)
+			lg.Printf("seed on %s ignored: %v", d, err)
 		case found != nil:
-			s.Log.Printf("seed on %s ignored: %s has one already", d, disk)
+			lg.Printf("seed on %s ignored: %s has one already", d, disk)
 		default:
 			found, disk = sd, d
 		}

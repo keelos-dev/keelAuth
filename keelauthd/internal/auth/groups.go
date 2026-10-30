@@ -17,6 +17,17 @@ type GroupOut struct {
 	MemberGroups []string `json:"member_groups"`
 	GID          int      `json:"gid"`
 	Builtin      bool     `json:"builtin"`
+	Access       []string `json:"access"` // the services its members may use (added to their own)
+}
+
+// groupView is groupOut with what keelauthd keeps of the group (the access list).
+func (s *Server) groupView(g *engine.Group) GroupOut {
+	o := groupOut(g)
+	o.Access = []string{}
+	if gd := s.State().Groups[g.Name]; gd != nil && gd.Access != nil {
+		o.Access = gd.Access
+	}
+	return o
 }
 
 func groupOut(g *engine.Group) GroupOut {
@@ -38,7 +49,7 @@ func (s *Server) getGroups(r *http.Request) (any, error) {
 	}
 	out := []GroupOut{}
 	for i := range gs {
-		out = append(out, groupOut(&gs[i]))
+		out = append(out, s.groupView(&gs[i]))
 	}
 	return map[string]any{"groups": out}, nil
 }
@@ -130,8 +141,12 @@ func (s *Server) postGroup(r *http.Request) (any, error) {
 		Name        string   `json:"name"`
 		Description string   `json:"description"`
 		Members     []string `json:"members"`
+		Access      []string `json:"access"`
 	}
 	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	if err := s.checkAccess(req.Access); err != nil {
 		return nil, err
 	}
 	switch {
@@ -160,7 +175,12 @@ func (s *Server) postGroup(r *http.Request) (any, error) {
 	if g, err = s.lookupGroup(req.Name); err != nil {
 		return nil, err
 	}
-	return groupOut(g), nil
+	if len(req.Access) > 0 {
+		if err := s.update(func(st *State) error { st.Groups[g.Name] = &GroupData{Access: cleanAccess(req.Access)}; return nil }, true); err != nil {
+			return nil, err
+		}
+	}
+	return s.groupView(g), nil
 }
 
 func (s *Server) patchGroup(r *http.Request) (any, error) {
@@ -171,9 +191,22 @@ func (s *Server) patchGroup(r *http.Request) (any, error) {
 	var req struct {
 		Description *string   `json:"description"`
 		Members     *[]string `json:"members"`
+		Access      *[]string `json:"access"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
+	}
+	if req.Access != nil {
+		if err := s.checkAccess(*req.Access); err != nil {
+			return nil, err
+		}
+		if err := s.update(func(st *State) error {
+			st.Groups[g.Name] = &GroupData{Access: cleanAccess(*req.Access)}
+			return nil
+		}, true); err != nil {
+			return nil, err
+		}
+		s.radiusLater()
 	}
 	if req.Description != nil {
 		if err := s.Eng.UpdateGroup(g.Name, req.Description); err != nil {
@@ -188,7 +221,7 @@ func (s *Server) patchGroup(r *http.Request) (any, error) {
 	if g, err = s.lookupGroup(g.Name); err != nil {
 		return nil, err
 	}
-	return groupOut(g), nil
+	return s.groupView(g), nil
 }
 
 func (s *Server) postMembers(r *http.Request) (any, error) {
@@ -212,7 +245,7 @@ func (s *Server) postMembers(r *http.Request) (any, error) {
 	if g, err = s.lookupGroup(g.Name); err != nil {
 		return nil, err
 	}
-	return groupOut(g), nil
+	return s.groupView(g), nil
 }
 
 func (s *Server) deleteGroup(r *http.Request) (any, error) {
@@ -229,6 +262,7 @@ func (s *Server) deleteGroup(r *http.Request) (any, error) {
 	if err := s.Eng.DeleteGroup(g.Name); err != nil {
 		return nil, err
 	}
+	s.update(func(st *State) error { delete(st.Groups, g.Name); return nil }, false)
 	s.bump()
 	return map[string]any{}, nil
 }

@@ -249,6 +249,7 @@ func (s *Server) buildHandler() http.Handler {
 	a("DELETE /v1/radius/clients/{name}", s.deleteRadiusClient)
 	a("GET /v1/ldap", s.getLDAP)
 	a("POST /v1/ldap/bind", s.postLDAPBind)
+	a("GET /v1/consumers", s.getConsumers)
 	a("GET /v1/ldap/devices", s.getDevices)
 	a("POST /v1/ldap/devices", s.postDevice)
 	a("POST /v1/ldap/devices/{name}/password", s.postDevicePassword)
@@ -293,6 +294,7 @@ func (s *Server) buildHandler() http.Handler {
 	a("POST /v1/sync/keys", s.postSyncKey)
 	a("DELETE /v1/sync/keys/{id}", s.deleteSyncKey)
 	m.HandleFunc("GET /v1/sync/accounts", s.need(s.syncer, s.wrap(s.ready(s.getSyncAccounts))))
+	m.HandleFunc("PUT /v1/sync/offers", s.need(s.syncer, s.wrap(s.ready(s.putSyncOffers))))
 	m.Handle("POST /mcp", s.need(s.mcpCaller, s.mcpHandler()))
 	m.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, notFound("no such API: %s %s", r.Method, r.URL.Path))

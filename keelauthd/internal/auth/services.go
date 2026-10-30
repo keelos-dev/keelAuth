@@ -227,20 +227,15 @@ func (s *Server) BringUp() error {
 		s.Log.Printf("bring-up: %v", err)
 	}
 	svc := s.waitServices()
-	switch {
-	case err == nil && svc["kanidmd"] == nil && svc["radiusd"] == nil:
-		s.Log.Printf("bring-up: Kanidm and FreeRADIUS ready")
-	default:
-		for _, n := range []string{"kanidmd", "radiusd"} {
-			if svc[n] != nil {
-				s.Log.Printf("bring-up: %s is NOT up: %v", n, svc[n])
-			} else {
-				s.Log.Printf("bring-up: %s up", n)
-			}
+	for _, n := range s.serviceNames() {
+		if svc[n] != nil {
+			s.Log.Printf("bring-up: %s is NOT up: %v", n, svc[n])
+		} else {
+			s.Log.Printf("bring-up: %s up", n)
 		}
 	}
 	if err == nil {
-		for _, n := range []string{"kanidmd", "radiusd"} {
+		for _, n := range s.serviceNames() {
 			if svc[n] != nil {
 				return fmt.Errorf("%s: %v", n, svc[n])
 			}
@@ -250,6 +245,7 @@ func (s *Server) BringUp() error {
 }
 
 func (s *Server) bringUp() error {
+	kanidm := s.engineKind() != EngineNative
 	if s.Real {
 		ch, err := s.EnsureTLS(s.State().Domain, s.internalIP())
 		if err != nil {
@@ -258,14 +254,17 @@ func (s *Server) bringUp() error {
 		if ch.Radius && s.running("radiusd") {
 			s.Sys.Run("", "service", "radiusd", "onestop")
 		}
-		if err := s.StartKanidm(ch.Server); err != nil {
-			return fmt.Errorf("kanidmd: %v", err)
+		if kanidm {
+			if err := s.StartKanidm(ch.Server); err != nil {
+				return fmt.Errorf("kanidmd: %v", err)
+			}
 		}
 	}
+	s.applyPolicy()
 	// Kanidm takes a few seconds to come up after a (re)start
 	var err error
 	for i := 0; i < s.waitTries(); i++ {
-		if s.State().Admin == "" {
+		if kanidm && s.State().Admin == "" {
 			if err = s.RecoverAdmin(); err != nil {
 				s.sleep(2 * time.Second)
 				continue
@@ -279,8 +278,10 @@ func (s *Server) bringUp() error {
 	if err != nil {
 		return err
 	}
-	if err := s.reindexOnce(); err != nil {
-		return fmt.Errorf("reindex: %v", err)
+	if kanidm {
+		if err := s.reindexOnce(); err != nil {
+			return fmt.Errorf("reindex: %v", err)
+		}
 	}
 	if err := s.Eng.Prepare(AdminGroup); err != nil {
 		return fmt.Errorf("prepare: %v", err)
@@ -400,8 +401,9 @@ func (s *Server) RadiusFiles(st *State, users []engine.User) (clients, authorize
 	var a strings.Builder
 	a.WriteString(generatedMark)
 	names := []string{}
+	ac := s.accessChecker()
 	for _, u := range users {
-		if !u.Enabled || u.Name == BindAccount {
+		if !u.Enabled || u.Name == BindAccount || !ac.allowed(u.Name, AccessWiFi) {
 			continue
 		}
 		if st.Radius.Group != "" && !contains(u.Groups, st.Radius.Group) {
@@ -555,9 +557,13 @@ func SockstatHas(out, command, proto string, port int) bool {
 	return false
 }
 
-// CheckServices checks both and keeps the result for the status and the alerts.
+// CheckServices checks each service keelauthd runs and keeps the result for the status and
+// the alerts (a service not run, kanidmd with the native engine, has no entry: nil = up).
 func (s *Server) CheckServices() map[string]error {
-	r := map[string]error{"kanidmd": s.CheckService("kanidmd"), "radiusd": s.CheckService("radiusd")}
+	r := map[string]error{}
+	for _, n := range s.serviceNames() {
+		r[n] = s.CheckService(n)
+	}
 	s.hmu.Lock()
 	s.svcErr = r
 	s.hmu.Unlock()
@@ -570,10 +576,20 @@ func (s *Server) waitServices() map[string]error {
 	var r map[string]error
 	for i := 0; i < 10; i++ {
 		r = s.CheckServices()
-		if r["kanidmd"] == nil && r["radiusd"] == nil {
+		if allUp(r) {
 			break
 		}
 		s.sleep(2 * time.Second)
 	}
 	return r
+}
+
+// allUp: no service of the check is down.
+func allUp(r map[string]error) bool {
+	for _, e := range r {
+		if e != nil {
+			return false
+		}
+	}
+	return true
 }

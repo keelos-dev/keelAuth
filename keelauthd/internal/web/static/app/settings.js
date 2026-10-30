@@ -34,7 +34,7 @@ function PwPolicyDialog({ len, strength, onClose, onDone }) {
     onDone();
   };
   return html`<${FormDialog} title=${t("gen.pwtitle")} submit=${t("save")} onSubmit=${save} onClose=${onClose}>
-    <label>${t("gen.pwlen")}<input type="number" min="10" max="64" value=${n} onInput=${(e) => setN(e.target.value)} /></label>
+    <label>${t("gen.pwlen")}<input type="number" min="8" max="64" value=${n} onInput=${(e) => setN(e.target.value)} /></label>
     <label>${t("gen.pwstrength")}<select value=${k} onChange=${(e) => setK(e.target.value)}>
       ${["strict", "normal", "length"].map((x) => html`<option value=${x}>${t("gen.pw." + x)}</option>`)}</select></label>
     <p class="muted small">${t("gen.pwnote")}</p>

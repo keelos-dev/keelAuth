@@ -27,7 +27,8 @@ keelauthd_start()
 		echo "keelauthd is already running."
 		return 0
 	fi
-	daemon -f -r -R 5 -P $supervisor_pid -t keelauthd -o /var/log/keelauthd.log $keelauthd serve
+	# keelauthd_env (rc.conf): variables for keelauthd, e.g. KEELAUTHD_ENGINE=native for a new one
+	daemon -f -r -R 5 -P $supervisor_pid -t keelauthd -o /var/log/keelauthd.log /usr/bin/env ${keelauthd_env:-} $keelauthd serve
 	echo "Started keelauthd."
 }
 

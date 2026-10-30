@@ -68,13 +68,21 @@ func (s *Server) Backup() (*BackupOut, error) {
 	if _, err := s.Sys.Run("", "install", "-d", "-m", "0700", s.backupDir()); err != nil {
 		s.Log.Printf("backup: %v", err)
 	}
-	if _, err := s.Sys.Run("", KanidmBin, "database", "backup", "-c", KanidmConf, tmp); err != nil {
-		return nil, fmt.Errorf("kanidm backup: %v", err)
-	}
-	kb, err := s.Sys.ReadFile(tmp)
-	s.Sys.Remove(tmp)
-	if err != nil {
-		return nil, fmt.Errorf("kanidm backup: %v", err)
+	// the accounts: Kanidm's database backup, or the native store's file
+	engName, kb := AccountsFile, []byte(nil)
+	if n := s.native(); n != nil {
+		kb = n.Export()
+	} else {
+		engName = kanidmBackupName
+		if _, err := s.Sys.Run("", KanidmBin, "database", "backup", "-c", KanidmConf, tmp); err != nil {
+			return nil, fmt.Errorf("kanidm backup: %v", err)
+		}
+		var err error
+		kb, err = s.Sys.ReadFile(tmp)
+		s.Sys.Remove(tmp)
+		if err != nil {
+			return nil, fmt.Errorf("kanidm backup: %v", err)
+		}
 	}
 	st, err := s.Sys.ReadFile(filepath.Join(s.Data, stateFile))
 	if err != nil {
@@ -84,7 +92,7 @@ func (s *Server) Backup() (*BackupOut, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := writeBackupFiles(map[string][]byte{kanidmBackupName: kb, stateFile: st, kn: kb2}, []string{kanidmBackupName, stateFile, kn}, now)
+	out, err := writeBackupFiles(map[string][]byte{engName: kb, stateFile: st, kn: kb2}, []string{engName, stateFile, kn}, now)
 	if err != nil {
 		return nil, err
 	}
@@ -163,10 +171,11 @@ func readBackupFiles(b []byte) (map[string][]byte, []string, error) {
 		}
 		out[h.Name] = v
 	}
-	for _, n := range []string{kanidmBackupName, stateFile} {
-		if out[n] == nil {
-			return nil, nil, fmt.Errorf("the backup has no %s", n)
-		}
+	if out[stateFile] == nil {
+		return nil, nil, fmt.Errorf("the backup has no %s", stateFile)
+	}
+	if out[kanidmBackupName] == nil && out[AccountsFile] == nil {
+		return nil, nil, fmt.Errorf("the backup has no %s", kanidmBackupName)
 	}
 	if out[wrapFile] == nil && out[masterKeyFile] == nil {
 		return nil, nil, fmt.Errorf("the backup has no %s", wrapFile)
@@ -276,23 +285,38 @@ func (s *Server) Restore(name, recovery, pass string) error {
 	if err := reseal(old, from, s.box); err != nil {
 		return coded(http.StatusBadRequest, "bad_key", "backup %s: %v", name, err)
 	}
-	tmp := filepath.Join(s.backupDir(), ".restore-kanidm.json.gz") // Kanidm takes it as gzip by the name
-	if err := s.Sys.WriteFile(tmp, files[kanidmBackupName], 0o600); err != nil {
-		return err
+	// the accounts go back into the engine the backup came from; a backup of the other engine
+	// is a migration, not a restore
+	switch n := s.native(); {
+	case n != nil && files[AccountsFile] == nil:
+		return bad("backup %s holds Kanidm's database: this keelAuth keeps its accounts itself (migrate it first)", name)
+	case n == nil && files[kanidmBackupName] == nil:
+		return bad("backup %s holds keelAuth's own account store: this keelAuth runs Kanidm", name)
+	case n != nil:
+		// the secrets in it are sealed under the backup's key: reseal through the state's box pair
+		if err := n.Import(files[AccountsFile], from, s.box); err != nil {
+			return fmt.Errorf("accounts: %v", err)
+		}
+	default:
+		tmp := filepath.Join(s.backupDir(), ".restore-kanidm.json.gz") // Kanidm takes it as gzip by the name
+		if err := s.Sys.WriteFile(tmp, files[kanidmBackupName], 0o600); err != nil {
+			return err
+		}
+		defer s.Sys.Remove(tmp)
+		s.Sys.Run("", "service", "kanidmd", "onestop")
+		if _, err := s.Sys.Run("", KanidmBin, "database", "restore", "-c", KanidmConf, tmp); err != nil {
+			s.Sys.Run("", "service", "kanidmd", "onestart")
+			return fmt.Errorf("kanidm restore: %v", err)
+		}
+		s.Sys.Run("", "chown", "-R", "kanidmd:kanidmd", s.kanidmDir())
 	}
-	defer s.Sys.Remove(tmp)
-	s.Sys.Run("", "service", "kanidmd", "onestop")
-	if _, err := s.Sys.Run("", KanidmBin, "database", "restore", "-c", KanidmConf, tmp); err != nil {
-		s.Sys.Run("", "service", "kanidmd", "onestart")
-		return fmt.Errorf("kanidm restore: %v", err)
-	}
-	s.Sys.Run("", "chown", "-R", "kanidmd:kanidmd", s.kanidmDir())
 	err = s.update(func(st *State) error {
 		old.Key = ""
 		old.Listen, old.HTTPSListen = st.Listen, st.HTTPSListen
 		old.Tokens, old.SyncKeys = st.Tokens, st.SyncKeys // access to keelAuth stays as it is now
 		old.LastBackup = st.LastBackup
 		old.Revision = st.Revision + 1
+		old.Engine = st.Engine
 		if old.Timezone == "" {
 			old.Timezone = st.Timezone
 		}
@@ -304,8 +328,10 @@ func (s *Server) Restore(name, recovery, pass string) error {
 		return err
 	}
 	s.sessions.clear()
-	if _, err := s.Sys.Run("", "service", "kanidmd", "onestart"); err != nil {
-		return err
+	if s.native() == nil {
+		if _, err := s.Sys.Run("", "service", "kanidmd", "onestart"); err != nil {
+			return err
+		}
 	}
 	s.Log.Printf("restored %s", name)
 	return s.BringUp()
@@ -409,7 +435,7 @@ func (s *Server) Schedule() {
 			}
 			if s.Real {
 				if ch, err := s.EnsureTLS(st.Domain, s.internalIP()); err == nil {
-					if ch.Server {
+					if ch.Server && s.engineKind() != EngineNative {
 						s.Sys.Run("", "service", "kanidmd", "onerestart")
 					}
 					if ch.Radius {
@@ -432,7 +458,7 @@ func (s *Server) restartGone() {
 		return
 	}
 	defer s.backupMu.Unlock()
-	for _, svc := range []string{"kanidmd", "radiusd"} {
+	for _, svc := range s.serviceNames() {
 		if s.running(svc) {
 			continue
 		}
@@ -447,7 +473,7 @@ func (s *Server) restartGone() {
 			s.Log.Printf("%s: %v", svc, err)
 		}
 	}
-	if r := s.waitServices(); r["kanidmd"] == nil && r["radiusd"] == nil {
+	if r := s.waitServices(); allUp(r) {
 		s.hmu.Lock()
 		eerr := s.engineErr
 		s.hmu.Unlock()

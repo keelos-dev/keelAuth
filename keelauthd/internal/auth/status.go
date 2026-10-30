@@ -37,7 +37,7 @@ func (s *Server) Alerts() []Alert {
 		out = append(out, Alert{"origin_ip_fallback", "warning", "origin", fb})
 	}
 	svc := s.CheckServices()
-	for _, n := range []string{"kanidmd", "radiusd"} {
+	for _, n := range s.serviceNames() {
 		if svc[n] != nil {
 			out = append(out, Alert{"service_down", "error", n, n + " is not up: " + svc[n].Error()})
 		}
@@ -99,7 +99,17 @@ func (s *Server) getStatus(r *http.Request) (any, error) {
 	// each service on its own: up = process running and its ports open (and for Kanidm its
 	// REST answering keelauthd); service_errors says why one is not
 	svc := s.CheckServices()
-	services := map[string]bool{"kanidmd": svc["kanidmd"] == nil && s.engineReady(), "radiusd": svc["radiusd"] == nil}
+	kind := s.engineKind()
+	services := map[string]bool{"radiusd": svc["radiusd"] == nil}
+	engineName := "store" // the native store: up = keelauthd's bring-up went through
+	if kind != EngineNative {
+		engineName = "kanidmd"
+	}
+	services[engineName] = svc[engineName] == nil && s.engineReady()
+	if kind == EngineNative { // the modules' listeners
+		services["ldap"] = ldapListening.Load() || !s.Real
+		services["oidc"] = oidcListening.Load() || !s.Real
+	}
 	serrs := map[string]string{}
 	for n, e := range svc {
 		if e != nil {
@@ -107,13 +117,13 @@ func (s *Server) getStatus(r *http.Request) (any, error) {
 		}
 	}
 	s.hmu.Lock()
-	if eerr := s.engineErr; eerr != nil && serrs["kanidmd"] == "" {
-		serrs["kanidmd"] = "keelauthd cannot use it: " + eerr.Error()
+	if eerr := s.engineErr; eerr != nil && serrs[engineName] == "" {
+		serrs[engineName] = "keelauthd cannot use it: " + eerr.Error()
 	}
 	s.hmu.Unlock()
 	mode, _, _, _ := s.OriginInfo()
 	out := map[string]any{
-		"version": s.versionString(), "hostname": s.hostname(), "domain": st.Domain, "origin": s.Origin(), "origin_mode": mode,
+		"version": s.versionString(), "hostname": s.hostname(), "domain": st.Domain, "origin": s.Origin(), "origin_mode": mode, "engine": kind,
 		"addresses": s.addresses(), "uptime_s": int64(time.Since(s.started).Seconds()), "services": services,
 		"service_errors": serrs,
 		"counts":         counts, "last_backup": st.LastBackup, "alerts": len(s.Alerts()), "fingerprint": s.Fingerprint(),
@@ -162,8 +172,8 @@ func (s *Server) putSettings(r *http.Request) (any, error) {
 	}
 	// the password rules go to Kanidm's config.toml; a change restarts kanidmd (a few seconds)
 	if req.PasswordMinLength != nil || req.PasswordStrength != nil {
-		if req.PasswordMinLength != nil && (*req.PasswordMinLength < 10 || *req.PasswordMinLength > 64) {
-			return nil, bad("password_min_length: 10 to 64")
+		if req.PasswordMinLength != nil && (*req.PasswordMinLength < 8 || *req.PasswordMinLength > 64) {
+			return nil, bad("password_min_length: 8 to 64")
 		}
 		if req.PasswordStrength != nil {
 			if _, ok := passwordScores[*req.PasswordStrength]; !ok {
@@ -181,7 +191,8 @@ func (s *Server) putSettings(r *http.Request) (any, error) {
 		}, false); err != nil {
 			return nil, err
 		}
-		if s.Real {
+		s.applyPolicy()
+		if s.Real && s.engineKind() != EngineNative {
 			if err := s.StartKanidm(false); err != nil {
 				return nil, fmt.Errorf("kanidmd: %v", err)
 			}

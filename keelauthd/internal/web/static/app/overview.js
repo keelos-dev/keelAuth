@@ -38,7 +38,9 @@ export function Overview({ status }) {
     <div class="tiles">
       <div class="card"><div class="row-head"><h3>${t("ov.services")}</h3></div>
         <table class="kv-table"><tbody>
-          <tr><th>Kanidm (LDAP, SSO)</th><td>${up(s.services && s.services.kanidmd, s.service_errors && s.service_errors.kanidmd)}</td></tr>
+          ${s.engine === "native"
+            ? html`<tr><th>${t("ov.store")}</th><td>${up(s.services && s.services.store, s.service_errors && s.service_errors.store)}</td></tr>`
+            : html`<tr><th>Kanidm (LDAP, SSO)</th><td>${up(s.services && s.services.kanidmd, s.service_errors && s.service_errors.kanidmd)}</td></tr>`}
           <tr><th>FreeRADIUS</th><td>${up(s.services && s.services.radiusd, s.service_errors && s.service_errors.radiusd)}</td></tr>
           ${s.managed_by_keel === false && html`<tr><th>keelOS</th><td class="muted">${t("ov.standalone")}</td></tr>`}
           ${s.keel && html`<tr><th>keelOS</th><td>${s.keel.registered ? html`<span class="badge ok">${t("ov.registered")}</span>` : html`<span class="warn">${s.keel.error || t("ov.notyet")}</span>`}</td></tr>`}

@@ -292,6 +292,9 @@ func (s *Server) deleteOIDC(r *http.Request) (any, error) {
 	if err := s.Eng.DeleteOAuth2(c.Name); err != nil {
 		return nil, err
 	}
+	if p := s.oidcSrvIfAny(); p != nil {
+		p.ClientDeleted(c.Name)
+	}
 	if _, ok := s.State().OIDCRoles[c.Name]; ok {
 		if err := s.update(func(st *State) error { delete(st.OIDCRoles, c.Name); return nil }, false); err != nil {
 			return nil, err

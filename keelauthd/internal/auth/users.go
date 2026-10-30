@@ -24,6 +24,9 @@ type UserOut struct {
 	SetAt       string   `json:"password_set_at"`
 	MustChange  bool     `json:"must_change"`
 	Admin       bool     `json:"admin"`
+	Access      []string `json:"access"`             // the services it may use; null = everything (access.go)
+	MailDomains []string `json:"mail_domains"`       // ticked mail domains (maildomains.go)
+	Addresses   []string `json:"addresses"`          // the mailboxes those give
 	Password    string   `json:"password,omitempty"` // only when keelauthd made one
 }
 
@@ -33,8 +36,13 @@ func (s *Server) userOut(u *engine.User) UserOut {
 	if o.Groups == nil {
 		o.Groups = []string{}
 	}
+	o.MailDomains, o.Addresses = []string{}, addressesOf(s.State(), u.Name)
 	if d := s.State().Users[u.Name]; d != nil {
 		o.HasNT, o.SetAt, o.MustChange = d.NT != "", d.SetAt, d.MustChange
+		o.Access = accessOut(d)
+		if d.MailDomains != nil {
+			o.MailDomains = d.MailDomains
+		}
 	}
 	return o
 }
@@ -145,14 +153,24 @@ func (s *Server) setUserGroups(name string, groups []string) error {
 
 func (s *Server) postUser(r *http.Request) (any, error) {
 	var req struct {
-		Name        string   `json:"name"`
-		DisplayName string   `json:"display_name"`
-		Mail        string   `json:"mail"`
-		Password    string   `json:"password"`
-		MustChange  *bool    `json:"must_change"`
-		Groups      []string `json:"groups"`
+		Name        string    `json:"name"`
+		DisplayName string    `json:"display_name"`
+		Mail        string    `json:"mail"`
+		Password    string    `json:"password"`
+		MustChange  *bool     `json:"must_change"`
+		Groups      []string  `json:"groups"`
+		Access      *[]string `json:"access"`
+		MailDomains []string  `json:"mail_domains"`
 	}
 	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	if req.Access != nil {
+		if err := s.checkAccess(*req.Access); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.checkMailDomains(req.MailDomains); err != nil {
 		return nil, err
 	}
 	switch {
@@ -192,6 +210,20 @@ func (s *Server) postUser(r *http.Request) (any, error) {
 		s.update(func(st *State) error { delete(st.Users, req.Name); return nil }, false)
 		return nil, err
 	}
+	if req.Access != nil || len(req.MailDomains) > 0 {
+		if err := s.update(func(st *State) error {
+			d := st.user(req.Name)
+			if req.Access != nil {
+				d.Access, d.AccessSet = cleanAccess(*req.Access), true
+			}
+			if len(req.MailDomains) > 0 {
+				d.MailDomains = cleanAccess(req.MailDomains)
+			}
+			return nil
+		}, true); err != nil {
+			return nil, err
+		}
+	}
 	if len(req.Groups) > 0 {
 		if err := s.setUserGroups(req.Name, req.Groups); err != nil {
 			return nil, err
@@ -219,12 +251,38 @@ func (s *Server) patchUser(r *http.Request) (any, error) {
 		Groups      *[]string `json:"groups"`
 		Enabled     *bool     `json:"enabled"`
 		MustChange  *bool     `json:"must_change"`
+		Access      *[]string `json:"access"`
+		MailDomains *[]string `json:"mail_domains"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
 	}
 	if req.Mail != nil && !validMail(*req.Mail) {
 		return nil, bad("mail %q is not an address", *req.Mail)
+	}
+	if req.MailDomains != nil {
+		if err := s.checkMailDomains(*req.MailDomains); err != nil {
+			return nil, err
+		}
+		if err := s.update(func(st *State) error {
+			st.user(u.Name).MailDomains = cleanAccess(*req.MailDomains)
+			return nil
+		}, true); err != nil {
+			return nil, err
+		}
+	}
+	if req.Access != nil {
+		if err := s.checkAccess(*req.Access); err != nil {
+			return nil, err
+		}
+		if err := s.update(func(st *State) error {
+			d := st.user(u.Name)
+			d.Access, d.AccessSet = cleanAccess(*req.Access), true
+			return nil
+		}, true); err != nil {
+			return nil, err
+		}
+		s.radiusLater()
 	}
 	if req.Groups != nil {
 		if err := s.checkGroups(*req.Groups); err != nil {

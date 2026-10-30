@@ -17,6 +17,11 @@ type SyncUser struct {
 	SetAt       string   `json:"password_set_at"`
 	MustChange  bool     `json:"must_change"`
 	Groups      []string `json:"groups"`
+	Mail        string   `json:"mail"`      // the account's own address
+	Addresses   []string `json:"addresses"` // its mailboxes at the offered domains
+	// PasswordHash: the password as a PHC string ($pbkdf2-sha256$…), for a mail server's own
+	// directory; "" with Kanidm (its hashes stay inside it) or without a password
+	PasswordHash string `json:"password_hash,omitempty"`
 }
 
 type SyncGroup struct {
@@ -41,11 +46,16 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 		return nil, err
 	}
 	users := []SyncUser{}
+	ac := s.accessChecker()
+	consumer := consumerOfSync(caller(r))
 	for _, u := range us {
-		if u.Name == BindAccount {
+		if u.Name == BindAccount || (consumer != "" && !ac.allowed(u.Name, consumer)) {
 			continue
 		}
-		su := SyncUser{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, Enabled: u.Enabled, Groups: u.Groups}
+		su := SyncUser{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, Enabled: u.Enabled, Groups: u.Groups, Mail: u.Mail, Addresses: addressesOf(st, u.Name)}
+		if n := s.native(); n != nil {
+			su.PasswordHash = n.PasswordHash(u.Name)
+		}
 		if su.Groups == nil {
 			su.Groups = []string{}
 		}
@@ -63,5 +73,5 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 		g := groupOut(&gs[i])
 		groups = append(groups, SyncGroup{Name: g.Name, GID: g.GID, Members: g.Members})
 	}
-	return map[string]any{"revision": st.Revision, "domain": st.Domain, "users": users, "groups": groups}, nil
+	return map[string]any{"revision": st.Revision, "domain": st.Domain, "users": users, "groups": groups, "mail_domains": mailDomainsOf(st)}, nil
 }

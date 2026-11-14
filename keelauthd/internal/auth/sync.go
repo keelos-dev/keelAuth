@@ -25,6 +25,9 @@ type SyncUser struct {
 	// TOTP: the account has an authenticator app set up (and the module is on): what POST
 	// /v1/sync/verify will ask a code for.
 	TOTP bool `json:"totp"`
+	// TOTPSetAt: when that authenticator was set up ("" without one): a gateway that let a
+	// computer in on a code drops it when this changes (docs/02 §9.2).
+	TOTPSetAt string `json:"totp_set_at"`
 }
 
 type SyncGroup struct {
@@ -58,7 +61,7 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 		if u.Name == BindAccount || (consumer != "" && !ac.allowed(u.Name, consumer)) {
 			continue
 		}
-		su := SyncUser{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, Enabled: u.Enabled, Groups: u.Groups, Mail: u.Mail, Addresses: ac.addresses(u.Name), TOTP: s.totpNeeded(u.Name)}
+		su := SyncUser{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, Enabled: u.Enabled, Groups: u.Groups, Mail: u.Mail, Addresses: ac.addresses(u.Name), TOTP: s.totpNeeded(u.Name), TOTPSetAt: s.totpSetAt(u.Name)}
 		if n := s.native(); n != nil && secrets {
 			su.PasswordHash = n.PasswordHash(u.Name)
 		}

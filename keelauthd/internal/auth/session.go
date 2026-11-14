@@ -204,6 +204,10 @@ type SessionInfo struct {
 	MustChange  bool   `json:"must_change"`
 	ViaKeel     bool   `json:"via_keel,omitempty"`
 	Timezone    string `json:"timezone"` // the zone the page shows times in (timezone.go)
+	// SelfServiceWhere / SelfServiceNote: "app" = employees do their own business in another
+	// app; the page shows them the note only (docs/02 §9.5).
+	SelfServiceWhere string `json:"self_service_where"`
+	SelfServiceNote  string `json:"self_service_note,omitempty"`
 }
 
 func (s *Server) getLoginState(r *http.Request) (any, error) {
@@ -217,7 +221,7 @@ func (s *Server) getLoginState(r *http.Request) (any, error) {
 }
 
 func (s *Server) info(name string, admin bool, csrf string) SessionInfo {
-	in := SessionInfo{Name: name, Admin: admin, CSRF: csrf}
+	in := SessionInfo{Name: name, Admin: admin, CSRF: csrf, SelfServiceWhere: s.selfServiceWhere(), SelfServiceNote: s.State().SelfServiceNote}
 	if u, err := s.Eng.User(name); err == nil {
 		in.DisplayName = u.DisplayName
 	}
@@ -329,6 +333,9 @@ func (s *Server) postOwnPassword(r *http.Request) (any, error) {
 	c := caller(r)
 	if c.Kind != "session" {
 		return nil, bad("only a logged-in user changes their own password here; use /v1/users/NAME/password")
+	}
+	if err := s.elsewhere(c); err != nil {
+		return nil, err
 	}
 	var req struct {
 		Old string `json:"old"`

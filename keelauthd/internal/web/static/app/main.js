@@ -191,6 +191,11 @@ function App() {
     <div class="actions"><button class="primary" onClick=${() => { try { window.top.location.reload(); } catch (_) { location.reload(); } }}>${t("login.keelagain")}</button></div></div>`;
   if (session === null) return html`<${Login} onLogin=${got} ...${page} />`;
   const logout = async () => { try { await api("POST", "logout"); } catch (_) { /* gone anyway */ } setSession(null); };
+  // not an admin, and their own business is done in another app (docs/02 §9.5): only the note
+  if (!session.admin && session.self_service_where === "app") {
+    return html`<${LoginPage} ...${page}><div class="stack"><p>${session.self_service_note || t("self.default")}</p>
+      <div class="actions"><button class="btn" onClick=${logout}>${t("top.logout")}</button></div></div><//>`;
+  }
   // not an admin, or a password to change first: only the own password
   if (!session.admin || session.must_change) {
     return html`<${LoginPage} ...${page}><${OwnPassword} session=${session} onDone=${() => api("GET", "session").then(got).catch(() => setSession(null))} onLogout=${logout} />

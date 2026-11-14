@@ -122,8 +122,9 @@ export function Users() {
   const [consumers, setConsumers] = useState([]);
   const [domains, setDomains] = useState([]);
   const [dlg, setDlg] = useState(null);
-  const load = () => Promise.all([api("GET", "v1/users"), api("GET", "v1/groups"), api("GET", "v1/consumers").catch(() => ({}))])
-    .then(([u, g, c]) => { setUs(u.users || []); setGroups(g.groups || []); setConsumers(c.consumers || []); setDomains(c.mail_domains_ticked || []); }).catch(fail);
+  const [totpOn, setTotpOn] = useState(false); // the totp module: the list says who has set up an authenticator
+  const load = () => Promise.all([api("GET", "v1/users"), api("GET", "v1/groups"), api("GET", "v1/consumers").catch(() => ({})), api("GET", "v1/totp").catch(() => ({}))])
+    .then(([u, g, c, tp]) => { setUs(u.users || []); setGroups(g.groups || []); setConsumers(c.consumers || []); setDomains(c.mail_domains_ticked || []); setTotpOn(!!tp.enabled); }).catch(fail);
   useEffect(() => { load(); }, []);
   if (!us) return html`<${Spinner} />`;
   const close = () => setDlg(null);
@@ -139,9 +140,10 @@ export function Users() {
       <button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("users.new")}</button></div>
     ${us.length === 0 && html`<p class="muted">${t("users.none")}</p>`}
     ${us.length > 0 && html`<div class="table-wrap tall"><table class="data plain">
-      <thead><tr><th>${t("users.name")}</th><th>${t("users.display")}</th><th>${t("users.mail")}</th><th>${t("users.groups")}</th><th>${t("users.setat")}</th><th></th></tr></thead>
+      <thead><tr><th>${t("users.name")}</th><th>${t("users.display")}</th><th>${t("users.mail")}</th><th>${t("users.groups")}</th><th>${t("users.setat")}</th>${totpOn && html`<th>${t("users.totp")}</th>`}<th></th></tr></thead>
       <tbody>${us.map((u) => html`<tr class=${u.enabled ? "" : "stale"}><td class="nowrap"><b>${u.name}</b> <${Flags} u=${u} /></td><td>${u.display_name}</td><td>${[u.mail, ...(u.addresses || [])].filter(Boolean).join(", ")}</td>
         <td>${u.groups.join(", ") || "–"}</td><td>${u.password_set_at ? fmtTime(u.password_set_at) : "–"}</td>
+        ${totpOn && html`<td>${u.totp ? fmtTime(u.totp_set_at) : html`<span class="warn">${t("users.nototp")}</span>`}</td>`}
         <td class="nowrap"><button class="btn" onClick=${() => setDlg({ kind: "edit", user: u })}>${t("edit")}</button>
           <button class="btn" onClick=${() => setDlg({ kind: "reset", user: u })}>${t("users.reset")}</button>
           <button class="btn" onClick=${() => toggle(u)}>${u.enabled ? t("users.disable") : t("users.enable")}</button>

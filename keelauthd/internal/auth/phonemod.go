@@ -216,6 +216,9 @@ func (s *Server) postPhoneEnrolment(r *http.Request) (any, error) {
 	if err := s.phoneOff(); err != nil {
 		return nil, err
 	}
+	if err := s.elsewhere(caller(r)); err != nil {
+		return nil, err
+	}
 	var req struct {
 		User string `json:"user"`
 	}

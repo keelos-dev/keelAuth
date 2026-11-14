@@ -313,6 +313,11 @@ func (s *Server) buildHandler() http.Handler {
 	m.HandleFunc("GET /v1/sync/accounts", s.need(s.syncer, s.wrap(s.ready(s.getSyncAccounts))))
 	m.HandleFunc("PUT /v1/sync/offers", s.need(s.syncer, s.wrap(s.ready(s.putSyncOffers))))
 	m.HandleFunc("POST /v1/sync/verify", s.need(s.syncer, s.wrap(s.ready(s.postSyncVerify))))
+	// an employee's own business through a sync key with self_service (selfservice.go, docs/02 §9.5)
+	m.HandleFunc("POST /v1/sync/self", s.need(s.syncer, s.wrap(s.ready(s.postSelf))))
+	m.HandleFunc("POST /v1/sync/self/password", s.need(s.syncer, s.wrap(s.ready(s.postSelfPassword))))
+	m.HandleFunc("POST /v1/sync/self/totp", s.need(s.syncer, s.wrap(s.ready(s.postSelfTOTP))))
+	m.HandleFunc("POST /v1/sync/self/totp/confirm", s.need(s.syncer, s.wrap(s.ready(s.postSelfTOTPConfirm))))
 	m.Handle("POST /mcp", s.need(s.mcpCaller, s.mcpHandler()))
 	m.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, notFound("no such API: %s %s", r.Method, r.URL.Path))

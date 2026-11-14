@@ -39,6 +39,18 @@ func (s *Server) totpSet(name string) bool {
 // totpNeeded: the login must ask for a code.
 func (s *Server) totpNeeded(name string) bool { return s.moduleOn("totp") && s.totpSet(name) }
 
+// totpSetAt: when the user's authenticator was set up, "" when none is asked for (not set,
+// or the module is off): what the sync and verify hand a gateway.
+func (s *Server) totpSetAt(name string) string {
+	if !s.totpNeeded(name) {
+		return ""
+	}
+	if d := s.State().Users[name]; d != nil {
+		return d.TOTPSetAt
+	}
+	return ""
+}
+
 // totpCheck verifies a code for the user (once per time step).
 func (s *Server) totpCheck(name, code string) bool {
 	d := s.State().Users[name]
@@ -87,20 +99,52 @@ func (s *Server) postTOTPEnroll(r *http.Request) (any, error) {
 	if c.Kind != "session" {
 		return nil, bad("only a logged-in user sets up their own code")
 	}
+	if err := s.elsewhere(c); err != nil {
+		return nil, err
+	}
+	secret, u := s.totpStart(c.Name)
+	return map[string]any{"secret": secret, "url": u, "qr": qrData(u), "expires_s": int(totpEnrolTTL.Seconds())}, nil
+}
+
+// totpStart makes a new secret for the user, pending until a code from it confirms it
+// (the page's and the self-service calls'): the secret and its otpauth URL.
+func (s *Server) totpStart(name string) (string, string) {
 	secret := totp.NewSecret()
 	totpMu.Lock()
-	totpEnrols[c.Name] = totpPending{secret, s.now().Add(totpEnrolTTL)}
+	totpEnrols[name] = totpPending{secret, s.now().Add(totpEnrolTTL)}
 	totpMu.Unlock()
 	issuer, _ := oidcDir{s}.Brand()
 	if issuer == "" {
 		issuer = "keelAuth"
 	}
-	u := totp.URL(issuer, c.Name, secret)
-	return map[string]any{"secret": secret, "url": u, "qr": qrData(u), "expires_s": int(totpEnrolTTL.Seconds())}, nil
+	return secret, totp.URL(issuer, name, secret)
+}
+
+// totpSave keeps a confirmed secret (replacing an earlier one) and ends the pending set-up.
+func (s *Server) totpSave(name, secret string) error {
+	sealed := s.box.Seal(secret)
+	if err := s.update(func(st *State) error {
+		d := st.Users[name]
+		if d == nil {
+			d = &UserData{}
+			st.Users[name] = d
+		}
+		d.TOTP, d.TOTPSetAt = sealed, s.now().UTC().Format(time.RFC3339)
+		return nil
+	}, false); err != nil {
+		return err
+	}
+	totpMu.Lock()
+	delete(totpEnrols, name)
+	totpMu.Unlock()
+	return nil
 }
 
 func (s *Server) postTOTPConfirm(r *http.Request) (any, error) {
 	c := caller(r)
+	if err := s.elsewhere(c); err != nil {
+		return nil, err
+	}
 	var req struct {
 		Code string `json:"code"`
 	}
@@ -116,21 +160,9 @@ func (s *Server) postTOTPConfirm(r *http.Request) (any, error) {
 	if ok, _ := totp.Verify(p.secret, req.Code, s.now()); !ok {
 		return nil, coded(http.StatusBadRequest, "bad_code", "the code is wrong: check the phone's clock and try the next one")
 	}
-	sealed := s.box.Seal(p.secret)
-	if err := s.update(func(st *State) error {
-		d := st.Users[c.Name]
-		if d == nil {
-			d = &UserData{}
-			st.Users[c.Name] = d
-		}
-		d.TOTP, d.TOTPSetAt = sealed, s.now().UTC().Format(time.RFC3339)
-		return nil
-	}, false); err != nil {
+	if err := s.totpSave(c.Name, p.secret); err != nil {
 		return nil, err
 	}
-	totpMu.Lock()
-	delete(totpEnrols, c.Name)
-	totpMu.Unlock()
 	s.Log.Printf("totp: %s set up a code", c.Name)
 	return map[string]any{"ok": true}, nil
 }
@@ -138,6 +170,9 @@ func (s *Server) postTOTPConfirm(r *http.Request) (any, error) {
 // deleteTOTP removes the own code, or anybody's for an administrator (?user=: the phone
 // is lost).
 func (s *Server) deleteTOTP(r *http.Request) (any, error) {
+	if err := s.elsewhere(caller(r)); err != nil {
+		return nil, err
+	}
 	user, err := s.phoneUser(r, r.URL.Query().Get("user"))
 	if err != nil {
 		return nil, err

@@ -33,6 +33,10 @@ func (s *Server) Alerts() []Alert {
 	if eerr != nil {
 		out = append(out, Alert{"engine", "error", "kanidmd", "Kanidm is not ready: " + eerr.Error()})
 	}
+	if s.legacyEngine() {
+		out = append(out, Alert{"legacy_engine", "warning", "engine",
+			"this keelAuth runs on Kanidm, the old engine: LDAP and SSO applications cannot be limited to a group, and the SSO sign-in page asks no authenticator code and has no phone QR sign-in; these are only on the built-in engine. An upgrade keeps the engine: deploy a new keelAuth to change"})
+	}
 	if _, _, _, fb := s.OriginInfo(); fb != "" {
 		out = append(out, Alert{"origin_ip_fallback", "warning", "origin", fb})
 	}
@@ -165,7 +169,8 @@ func (s *Server) settingsOut(r *http.Request) map[string]any {
 		"password_min_length": minLen, "password_strength": strength,
 		// timezone: keelAuth's own (standalone); managed by keel the page uses keel's (timezone_in_use)
 		"timezone": tz, "timezone_in_use": s.zoneFor(r), "timezone_from_keel": s.managed(),
-		"master_key": s.masterKeyInfo(), "brand": st.Brand.out()}
+		"master_key": s.masterKeyInfo(), "brand": st.Brand.out(),
+		"self_service_where": s.selfServiceWhere(), "self_service_note": st.SelfServiceNote}
 }
 
 func (s *Server) getSettings(r *http.Request) (any, error) { return s.settingsOut(r), nil }
@@ -176,6 +181,8 @@ func (s *Server) putSettings(r *http.Request) (any, error) {
 		Timezone          *string `json:"timezone"`
 		PasswordMinLength *int    `json:"password_min_length"`
 		PasswordStrength  *string `json:"password_strength"`
+		SelfServiceWhere  *string `json:"self_service_where"`
+		SelfServiceNote   *string `json:"self_service_note"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
@@ -220,6 +227,28 @@ func (s *Server) putSettings(r *http.Request) (any, error) {
 			z = ""
 		}
 		if err := s.update(func(st *State) error { st.Timezone = z; return nil }, false); err != nil {
+			return nil, err
+		}
+	}
+	if req.SelfServiceWhere != nil || req.SelfServiceNote != nil {
+		if req.SelfServiceWhere != nil && *req.SelfServiceWhere != "page" && *req.SelfServiceWhere != "app" && *req.SelfServiceWhere != "" {
+			return nil, bad("self_service_where: page or app")
+		}
+		if req.SelfServiceNote != nil && len(*req.SelfServiceNote) > 500 {
+			return nil, bad("self_service_note: at most 500 characters")
+		}
+		if err := s.update(func(st *State) error {
+			if req.SelfServiceWhere != nil {
+				st.SelfServiceWhere = *req.SelfServiceWhere
+				if st.SelfServiceWhere == "page" {
+					st.SelfServiceWhere = ""
+				}
+			}
+			if req.SelfServiceNote != nil {
+				st.SelfServiceNote = strings.TrimSpace(*req.SelfServiceNote)
+			}
+			return nil
+		}, false); err != nil {
 			return nil, err
 		}
 	}

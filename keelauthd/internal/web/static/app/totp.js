@@ -28,7 +28,7 @@ export function Totp({ user }) {
     ${d.set ? html`<div class="row"><span>${t("totp.set", fmtTime(d.set_at))}</span> <button type="button" class="btn" onClick=${del}>${t(user ? "totp.reset" : "totp.remove")}</button></div>`
       : user ? html`<p class="muted small">${t("totp.none")}</p>`
       : enrol ? html`<form class="phone-enrol" onSubmit=${confirm}><img src=${enrol.qr} alt="" />
-          <p class="muted small">${t("totp.scan")}</p><p class="mono small">${enrol.secret}</p>
+          <p class="muted small">${t("totp.scan")}</p><p class="small">${t("totp.phones")}</p><p class="mono small">${enrol.secret}</p>
           <input type="text" inputmode="numeric" autocomplete="one-time-code" placeholder=${t("totp.code")} value=${code} onInput=${(e) => setCode(e.target.value)} required />
           ${err && html`<p class="error small">${err}</p>`}
           <div class="actions"><button type="button" class="btn" onClick=${() => setEnrol(null)}>${t("cancel")}</button><button type="submit" class="primary">${t("totp.confirm")}</button></div></form>`

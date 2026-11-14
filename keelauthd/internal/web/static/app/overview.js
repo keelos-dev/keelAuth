@@ -30,6 +30,7 @@ export function Overview({ status }) {
     <div class="card"><div class="row-head"><h3>keelAuth</h3></div>
       <div class="host-grid">
         <${KV} k=${t("ov.version")} v=${s.version} />
+        <${KV} k=${t("ov.engine")} v=${s.engine === "native" ? t("ov.engine.native") : s.engine ? t("ov.engine.kanidm") : "–"} />
         <${KV} k=${t("ov.addresses")} v=${addr} />
         <${KV} k=${t("ov.uptime")} v=${dur(s.uptime_s || 0)} />
         <${KV} k=${t("ov.lastbackup")} v=${s.last_backup ? fmtTime(s.last_backup) : t("ov.never")} />

@@ -81,11 +81,11 @@ function Services({ consumers, groups, onDone }) {
       <thead><tr><th>${t("svc.service")}</th><th>${t("svc.group")}</th><th>${t("svc.users")}</th></tr></thead>
       <tbody>${consumers.map((c) => { const opts = [...names]; if (c.group && !opts.includes(c.group)) opts.push(c.group); const fresh = c.suggest && !opts.includes(c.suggest) ? c.suggest : "";
         return html`<tr><td><b>${svcLabel(c)}</b>${(c.mail_domains || []).length ? html` <span class="muted small">${t("svc.domains", c.mail_domains.join(", "))}</span>` : ""}</td>
-          <td><select value=${c.group} onChange=${(e) => set(c, e.target.value)}>
+          <td>${c.unlimited ? html`<span class="muted">${t("svc.unlimited")}</span>` : html`<select value=${c.group} onChange=${(e) => set(c, e.target.value)}>
               <option value="">${t("svc.everyone")}</option>
               ${opts.map((n) => html`<option value=${n}>${n}</option>`)}
               ${fresh && html`<option value=${fresh}>${t("svc.newgroup", fresh)}</option>`}</select>
-            ${c.missing && html` <span class="warn small">${t("svc.missing", c.group)}</span>`}</td>
-          <td>${c.users}</td></tr>`; })}</tbody></table></div>
+            ${c.missing && html` <span class="warn small">${t("svc.missing", c.group)}</span>`}`}</td>
+          <td>${c.users}${(c.no_totp || []).length > 0 && html` <details class="inline"><summary class="warn small">${t("svc.nototp", c.no_totp.length)}</summary><span class="small">${c.no_totp.join(", ")}</span></details>`}</td></tr>`; })}</tbody></table></div>
   </div>`;
 }

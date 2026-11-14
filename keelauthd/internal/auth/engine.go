@@ -58,6 +58,12 @@ func (s *Server) engineKind() string {
 	return EngineKanidm
 }
 
+// legacyEngine: this keelAuth runs on Kanidm, the old engine (docs/02 §9.4): the state says so,
+// or a real server has no native store. The test fake is neither.
+func (s *Server) legacyEngine() bool {
+	return s.State().Engine == EngineKanidm || (s.Real && s.native() == nil)
+}
+
 // serviceNames are the system services keelauthd runs: kanidmd only with Kanidm.
 func (s *Server) serviceNames() []string {
 	var out []string

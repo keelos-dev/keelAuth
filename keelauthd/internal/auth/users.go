@@ -27,6 +27,10 @@ type UserOut struct {
 	MailDomains []string `json:"mail_domains"`       // ticked mail domains (maildomains.go)
 	Addresses   []string `json:"addresses"`          // the mailboxes those give
 	Password    string   `json:"password,omitempty"` // only when keelauthd made one
+	// TOTP: an authenticator app is set up and asked for (the module is on); TOTPSetAt: when.
+	// A sync key with require_totp lets nobody without one in (docs/02 §9.2).
+	TOTP      bool   `json:"totp"`
+	TOTPSetAt string `json:"totp_set_at"`
 }
 
 func (s *Server) userOut(u *engine.User) UserOut {
@@ -36,6 +40,7 @@ func (s *Server) userOut(u *engine.User) UserOut {
 		o.Groups = []string{}
 	}
 	o.MailDomains, o.Addresses = []string{}, s.accessChecker().addresses(u.Name)
+	o.TOTP, o.TOTPSetAt = s.totpNeeded(u.Name), s.totpSetAt(u.Name)
 	if d := s.State().Users[u.Name]; d != nil {
 		o.HasNT, o.SetAt, o.MustChange = d.NT != "", d.SetAt, d.MustChange
 		if d.MailDomains != nil {

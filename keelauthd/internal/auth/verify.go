@@ -28,6 +28,8 @@ type verifyOut struct {
 	Groups      []string `json:"groups"`
 	// TOTP: a code was asked and was right.
 	TOTP bool `json:"totp"`
+	// TOTPSetAt: as in the sync (when the authenticator was set up, "" without one).
+	TOTPSetAt string `json:"totp_set_at"`
 	// MustChange: the administrator wants the password changed at the next login; the
 	// service decides whether it lets such an account in.
 	MustChange bool   `json:"must_change"`
@@ -80,7 +82,8 @@ func (s *Server) postSyncVerify(r *http.Request) (any, error) {
 		return nil, coded(http.StatusForbidden, "not_allowed", "this account may not use this service")
 	}
 	asked := s.totpNeeded(name)
-	if !asked && key != nil && key.RequireTOTP {
+	self := key != nil && key.SelfService // its front end can send the person to finish setting up (selfservice.go)
+	if !asked && key != nil && key.RequireTOTP && !self {
 		s.Log.Printf("verify %s for %s: no authenticator app", name, who)
 		return nil, coded(http.StatusForbidden, "totp_not_set", "set up an authenticator app on keelAuth's page first")
 	}
@@ -94,9 +97,17 @@ func (s *Server) postSyncVerify(r *http.Request) (any, error) {
 			return nil, coded(http.StatusUnauthorized, "bad_code", "the code is wrong")
 		}
 	}
+	if s.initialExpired(name) {
+		s.Log.Printf("verify %s for %s: initial password expired", name, who)
+		return nil, coded(http.StatusForbidden, "password_expired", "this initial password has expired: ask the administrator for a new one")
+	}
+	if self && len(s.selfNeeds(name, key)) > 0 {
+		s.Log.Printf("verify %s for %s: setting up not finished (%s)", name, who, strings.Join(s.selfNeeds(name, key), ", "))
+		return nil, coded(http.StatusForbidden, "setup_needed", "the password or the authenticator app is still to be set up (POST /v1/sync/self says which)")
+	}
 	s.sessions.ok(name)
 	s.Log.Printf("verify %s for %s: ok", name, who)
-	out := verifyOut{Name: u.Name, DisplayName: u.DisplayName, Groups: u.Groups, TOTP: asked}
+	out := verifyOut{Name: u.Name, DisplayName: u.DisplayName, Groups: u.Groups, TOTP: asked, TOTPSetAt: s.totpSetAt(u.Name)}
 	if out.Groups == nil {
 		out.Groups = []string{}
 	}

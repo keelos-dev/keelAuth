@@ -41,6 +41,21 @@ function PwPolicyDialog({ len, strength, onClose, onDone }) {
   <//>`;
 }
 
+// SelfDialog: where employees change their own password and set up an authenticator (docs/02
+// §9.5): on this page (the default) or in another app (a sync key with self_service); then the
+// page shows them only the note (empty = the default text, shown as the placeholder).
+function SelfDialog({ where, note, onClose, onDone }) {
+  const [w, setW] = useState(where === "app" ? "app" : "page");
+  const [n, setN] = useState(note);
+  const save = async () => { await api("PUT", "v1/settings", { self_service_where: w, self_service_note: n }); onDone(); };
+  return html`<${FormDialog} title=${t("gen.self")} submit=${t("save")} onSubmit=${save} onClose=${onClose}>
+    <label>${t("gen.self.where")}<select value=${w} onChange=${(e) => setW(e.target.value)}>
+      <option value="page">${t("gen.self.page")}</option><option value="app">${t("gen.self.app")}</option></select></label>
+    ${w === "app" && html`<label>${t("gen.self.note")}<textarea rows="3" maxlength="500" placeholder=${t("self.default")} value=${n} onInput=${(e) => setN(e.target.value)}></textarea></label>`}
+    <p class="muted small">${t("gen.self.hint")}</p>
+  <//>`;
+}
+
 function PassDialog({ onClose, onDone }) {
   const [a, setA] = useState("");
   const [b, setB] = useState("");
@@ -107,12 +122,15 @@ function General() {
         <button class="btn" onClick=${() => setDlg("brand")}>${t("edit")}</button></td></tr>
       <tr><th>${t("gen.pw")}</th><td>${t("gen.pwvalue", s.password_min_length, t("gen.pw." + s.password_strength))}
         <button class="btn" onClick=${() => setDlg("pw")}>${t("edit")}</button></td></tr>
+      <tr><th>${t("gen.self")}</th><td>${s.self_service_where === "app" ? t("gen.self.app") : t("gen.self.page")}
+        <button class="btn" onClick=${() => setDlg("self")}>${t("edit")}</button></td></tr>
       <tr><th>${t("gen.support")}</th><td>${t("gen.supportnote")}<a class="btn" href=${rel("v1/support-bundle")} download>${t("gen.supportdl")}</a></td></tr>
     </tbody></table>
     <p class="muted small">${s.timezone_from_keel ? t("gen.mkkeelnote") : t("gen.tzfor")}</p>
     ${dlg === "tz" && html`<${ZoneDialog} zone=${s.timezone} onClose=${() => setDlg(null)} onDone=${load} />`}
     ${dlg === "brand" && html`<${BrandDialog} brand=${s.brand || {}} onClose=${() => setDlg(null)} onDone=${() => { setDlg(null); load(); }} />`}
     ${dlg === "pass" && html`<${PassDialog} onClose=${() => setDlg(null)} onDone=${load} />`}
+    ${dlg === "self" && html`<${SelfDialog} where=${s.self_service_where} note=${s.self_service_note || ""} onClose=${() => setDlg(null)} onDone=${() => { setDlg(null); load(); }} />`}
     ${dlg === "pw" && html`<${PwPolicyDialog} len=${s.password_min_length} strength=${s.password_strength} onClose=${() => setDlg(null)} onDone=${() => { setDlg(null); load(); }} />`}
   </div>`;
 }
@@ -159,9 +177,9 @@ function NewToken({ title, onClose, onDone, path, scopes }) {
 // NewSyncKey: a sync key with whose accounts it is given (its group), whether it gets their
 // password hashes, and whether a login through it needs the authenticator app's code.
 function NewSyncKey({ onClose, onDone }) {
-  const [f, setF] = useState({ name: "", group: "", secrets: true, require_totp: false });
+  const [f, setF] = useState({ name: "", group: "", secrets: true, require_totp: false, self_service: false });
   const set = (k) => (e) => { const v = e.target.type === "checkbox" ? e.target.checked : e.target.value; setF((f) => ({ ...f, [k]: v })); };
-  const save = async () => onDone(await api("POST", "v1/sync/keys", { name: f.name.trim(), group: f.group.trim(), secrets: f.secrets, require_totp: f.require_totp }));
+  const save = async () => onDone(await api("POST", "v1/sync/keys", { name: f.name.trim(), group: f.group.trim(), secrets: f.secrets, require_totp: f.require_totp, self_service: f.self_service }));
   return html`<${FormDialog} title=${t("sync.new")} submit=${t("tok.make")} onSubmit=${save} onClose=${onClose}>
     <label>${t("tok.name")}<input type="text" required maxlength="64" value=${f.name} onInput=${set("name")} />
       <span class="muted small">${t("tok.namehint")}</span></label>
@@ -169,6 +187,7 @@ function NewSyncKey({ onClose, onDone }) {
       <span class="muted small">${t("sync.grouphint")}</span></label>
     <label class="check"><input type="checkbox" checked=${f.secrets} onChange=${set("secrets")} /> ${t("sync.secrets")}</label>
     <label class="check"><input type="checkbox" checked=${f.require_totp} onChange=${set("require_totp")} /> ${t("sync.totp")}</label>
+    <label class="check"><input type="checkbox" checked=${f.self_service} onChange=${set("self_service")} /> ${t("sync.self")}</label>
   <//>`;
 }
 
@@ -246,7 +265,7 @@ function Sync() {
   };
   return html`<div class="card"><div class="row-head"><h3>${t("sync.title")}</h3><button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("sync.new")}</button></div>
     <p class="ka-for">${t("sync.for")}</p>
-    <${TokenList} list=${d.keys} onDelete=${del} extra=${(x) => html`${x.group ? html` <span class="badge">${x.group}</span>` : ""}${x.secrets === false ? html` <span class="badge">${t("sync.nosecrets")}</span>` : ""}${x.require_totp ? html` <span class="badge">${t("sync.totpbadge")}</span>` : ""}`} />
+    <${TokenList} list=${d.keys} onDelete=${del} extra=${(x) => html`${x.group ? html` <span class="badge">${x.group}</span>` : ""}${x.secrets === false ? html` <span class="badge">${t("sync.nosecrets")}</span>` : ""}${x.require_totp ? html` <span class="badge">${t("sync.totpbadge")}</span>` : ""}${x.self_service ? html` <span class="badge">${t("sync.selfbadge")}</span>` : ""}`} />
     ${dlg && dlg.kind === "new" && html`<${NewSyncKey} onClose=${() => setDlg(null)}
       onDone=${(x) => { load(); setTimeout(() => setDlg({ kind: "shown", x })); }} />`}
     ${dlg && dlg.kind === "shown" && html`<${Shown} title=${t("ai.made", dlg.x.name)} onClose=${() => setDlg(null)} rows=${[[t("sync.key"), dlg.x.key]]} />`}

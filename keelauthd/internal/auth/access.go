@@ -50,6 +50,13 @@ type Consumer struct {
 	Users int `json:"users"`
 	// MailDomains: a mail server's (a sync key that offers them, maildomains.go).
 	MailDomains []string `json:"mail_domains,omitempty"`
+	// Unlimited: it cannot be given a group here: Kanidm, the old engine, serves it itself
+	// (LDAP, each SSO application), so every account may use it (docs/02 §9.4).
+	Unlimited bool `json:"unlimited,omitempty"`
+	// RequireTOTP: a sync key that lets in only accounts with an authenticator app; NoTOTP:
+	// those of its accounts without one, who cannot log in through it yet (docs/02 §9.2).
+	RequireTOTP bool     `json:"require_totp,omitempty"`
+	NoTOTP      []string `json:"no_totp,omitempty"`
 }
 
 // groupWord makes a group name out of what a service is called ("Paperless NGX" →
@@ -95,7 +102,7 @@ func (s *Server) Consumers() []Consumer {
 		}
 	}
 	for _, k := range st.SyncKeys {
-		c := Consumer{ID: accessSync + k.ID, Kind: "sync", Name: k.Name, Suggest: groupWord(k.Name), MailDomains: k.MailDomains}
+		c := Consumer{ID: accessSync + k.ID, Kind: "sync", Name: k.Name, Suggest: groupWord(k.Name), MailDomains: k.MailDomains, RequireTOTP: k.RequireTOTP}
 		if len(k.MailDomains) > 0 {
 			c.Suggest = "mail"
 		}
@@ -110,8 +117,13 @@ func (s *Server) Consumers() []Consumer {
 			}
 		}
 	}
+	kanidm := s.legacyEngine()
 	for i := range out {
 		c := &out[i]
+		if kanidm && (c.Kind == "ldap" || c.Kind == "oidc") {
+			c.Unlimited, c.Users = true, len(names)
+			continue
+		}
 		c.Group = st.ServiceGroups[c.ID]
 		if c.Group != "" {
 			_, err := s.Eng.Group(c.Group)
@@ -120,8 +132,12 @@ func (s *Server) Consumers() []Consumer {
 		for _, n := range names {
 			if ac.allowed(n, c.ID) {
 				c.Users++
+				if c.RequireTOTP && !s.totpNeeded(n) {
+					c.NoTOTP = append(c.NoTOTP, n)
+				}
 			}
 		}
+		sort.Strings(c.NoTOTP)
 	}
 	return out
 }
@@ -151,6 +167,10 @@ func (s *Server) putConsumer(r *http.Request) (any, error) {
 	}
 	if found == nil {
 		return nil, notFound("no service %q", id)
+	}
+	if found.Unlimited && strings.TrimSpace(req.Group) != "" {
+		return nil, coded(http.StatusConflict, "engine_kanidm",
+			"%s cannot be limited to a group on Kanidm, the old engine (it serves %s itself): deploy a new keelAuth for that", found.Name, found.Name)
 	}
 	if err := s.setServiceGroup(id, found.Name, strings.ToLower(strings.TrimSpace(req.Group))); err != nil {
 		return nil, err

@@ -378,7 +378,8 @@ func TestSyncKeyForAGateway(t *testing.T) {
 	}
 	for _, u := range sy["users"].([]any) {
 		m := u.(map[string]any)
-		if m["nt_hash"] != "" || m["password_hash"] != nil || m["totp"] != (m["name"] == "alice") || m["password_set_at"] == "" {
+		if m["nt_hash"] != "" || m["password_hash"] != nil || m["totp"] != (m["name"] == "alice") || m["password_set_at"] == "" ||
+			(m["totp_set_at"] != "") != (m["name"] == "alice") {
 			t.Fatalf("a synced account: %v", m)
 		}
 	}
@@ -404,8 +405,27 @@ func TestSyncKeyForAGateway(t *testing.T) {
 		t.Fatalf("no such account: %d %v", c, out)
 	}
 	c, out2 := verify("alice", "orange-kettle-7", good())
-	if c != 200 || out2["name"] != "alice" || out2["totp"] != true || out2["must_change"] != false || out2["password_set_at"] == "" {
+	if c != 200 || out2["name"] != "alice" || out2["totp"] != true || out2["must_change"] != false || out2["password_set_at"] == "" || out2["totp_set_at"] == "" {
 		t.Fatalf("right: %d %v", c, out2)
+	}
+	setAt := out2["totp_set_at"]
+	// who cannot come in through this key yet: carol (no authenticator), on the services card and the user list
+	seen := false
+	for _, c := range r.ok("GET", "/v1/consumers", nil)["consumers"].([]any) {
+		if m := c.(map[string]any); m["kind"] == "sync" && m["name"] == "portal" {
+			seen = true
+			if m["require_totp"] != true || fmt.Sprint(m["no_totp"]) != "[carol]" || m["users"] != float64(2) {
+				t.Fatalf("the gateway's service: %v", m)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("the gateway's key is not among the services")
+	}
+	for _, u := range r.ok("GET", "/v1/users", nil)["users"].([]any) {
+		if m := u.(map[string]any); m["totp"] != (m["name"] == "alice") || (m["totp_set_at"] != "") != (m["name"] == "alice") {
+			t.Fatalf("user list, totp: %v", m)
+		}
 	}
 	if gs, _ := out2["groups"].([]any); len(gs) != 2 {
 		t.Fatalf("groups in the answer: %v", out2["groups"])
@@ -444,6 +464,14 @@ func TestSyncKeyForAGateway(t *testing.T) {
 	}
 	if c, out := verify("dave", "yellow-window-5", ""); c != 429 || out["code"] != "too_many" {
 		t.Fatalf("after five wrong tries: %d %v", c, out)
+	}
+	// the authenticator taken away: the sync says so (totp_set_at empty), so a gateway drops alice's computers
+	r.ok("DELETE", "/v1/totp?user=alice", nil)
+	_, sy2, _ := r.call("GET", "/v1/sync/accounts", key, nil)
+	for _, u := range sy2["users"].([]any) {
+		if m := u.(map[string]any); m["name"] == "alice" && (m["totp"] != false || m["totp_set_at"] != "") {
+			t.Fatalf("alice without an authenticator (was set at %v): %v", setAt, m)
+		}
 	}
 	// the key revoked: its group is no service's any more
 	r.ok("DELETE", "/v1/sync/keys/"+k["id"].(string), nil)

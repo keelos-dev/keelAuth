@@ -88,6 +88,9 @@ type Token struct {
 	// RequireTOTP: a sync key whose POST /v1/sync/verify passes only accounts with an
 	// authenticator app set up (verify.go).
 	RequireTOTP bool `json:"require_totp,omitempty"`
+	// SelfService: a sync key whose front end may do an employee's own business for them
+	// (POST /v1/sync/self…, selfservice.go, docs/02 §9.5).
+	SelfService bool `json:"self_service,omitempty"`
 }
 
 // State is keelauthd's own data. Accounts themselves are in the engine.
@@ -131,6 +134,11 @@ type State struct {
 	// Kanidm's own rule) / normal (3) / length (no strength check; "" = length, the default).
 	PasswordMinLength int    `json:"password_min_length,omitempty"`
 	PasswordStrength  string `json:"password_strength,omitempty"`
+	// SelfServiceWhere: where employees change their password and set up an authenticator:
+	// "" / "page" = keelAuth's own page, "app" = another app (a sync key with self_service);
+	// SelfServiceNote: what keelAuth's page tells them then ("" = the default text). docs/02 §9.5.
+	SelfServiceWhere string `json:"self_service_where,omitempty"`
+	SelfServiceNote  string `json:"self_service_note,omitempty"`
 	// OIDCRoles: per SSO application, what its groups mean there, as the application told us
 	// (keelOS: keel-admins = admin…, PUT /v1/oidc/{name}/roles); the page shows them and offers
 	// to make the missing groups

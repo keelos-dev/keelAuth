@@ -10,6 +10,7 @@ named by their short lower-case name. Errors come back as text that starts with 
 - user_add
 - user_disable, user_enable
 - user_reset_password
+- module_set, feature_list, user_set_features
 - group_list, group_add, group_members
 - service_list, service_group
 - oidc_list, oidc_create
@@ -101,6 +102,23 @@ Other errors: `the name "x" is taken (a user or a group)`, `the name "admin" is 
 ```
 
 `password` is empty when the user gave one.
+
+## module_set, feature_list, user_set_features
+
+Feature modules are attributes on an account (keelAuth docs/02 §10); the first is `computers`, the
+office computers a person may reach from home through the gateway. Off by default:
+`module_set {"name": "computers", "enabled": true}` first.
+
+`feature_list` (no arguments) shows each module, whether it is on, its fields and rules.
+
+`user_set_features {"name": "anna", "features": {"computers": [{"name": "GYOMU90", "address": "192.168.1.50"}]}}`
+replaces anna's list (port defaults to 3389; `null` clears it). Answer:
+
+```json
+{"name": "anna", "features": {"computers": [{"address": "192.168.1.50", "name": "GYOMU90", "port": 3389}]}}
+```
+
+A bad row is refused as a whole, e.g. `error: computers row 1: address: not an IPv4 address or host name`.
 
 ## group_list, group_add, group_members
 

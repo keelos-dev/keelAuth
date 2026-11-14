@@ -80,7 +80,7 @@ func get(path string) func(Doer, map[string]any) (any, error) {
 
 func userSummary(u map[string]any) map[string]any {
 	out := map[string]any{}
-	for _, k := range []string{"name", "display_name", "mail", "enabled", "groups", "admin", "has_nt", "must_change", "password_set_at", "password"} {
+	for _, k := range []string{"name", "display_name", "mail", "enabled", "groups", "admin", "has_nt", "must_change", "password_set_at", "password", "features"} {
 		if v, ok := u[k]; ok && v != nil && v != "" {
 			out[k] = v
 		}
@@ -159,6 +159,41 @@ var tools = []Tool{
 				return nil, err
 			}
 			return userSummary(out), nil
+		}},
+	{Name: "feature_list", Title: "List feature modules",
+		Description: "keelAuth's feature modules (attributes on an account, docs/02 §10), e.g. computers = the office computers a person may reach from home: whether each is switched on, its fields and their rules, and how many accounts have values. Switch one on with module_set.",
+		InputSchema: obj(map[string]any{}), Annotations: readOnly,
+		Run: func(api Doer, _ map[string]any) (any, error) {
+			var out any
+			return out, api.Do("GET", "/v1/features", nil, &out)
+		}},
+	{Name: "module_set", Title: "Switch a module on or off",
+		Description: "Switch one of keelAuth's modules on or off (Settings → Modules): ways in (ldap, oidc, radius, phone, totp) and feature modules (computers). Switching a feature module off hides its values everywhere but keeps them.",
+		InputSchema: obj(map[string]any{"name": map[string]any{"type": "string"}, "enabled": map[string]any{"type": "boolean"}}, "name", "enabled"),
+		Annotations: sensitive,
+		Run: func(api Doer, a map[string]any) (any, error) {
+			n, err := str(a, "name", true)
+			if err != nil {
+				return nil, err
+			}
+			var out any
+			return out, api.Do("PUT", "/v1/modules/"+url.PathEscape(n), map[string]any{"enabled": a["enabled"]}, &out)
+		}},
+	{Name: "user_set_features", Title: "Set a user's feature attributes",
+		Description: "Replace a user's values of one or more feature modules that are on, e.g. features = {\"computers\": [{\"name\": \"GYOMU90\", \"address\": \"192.168.1.50\", \"port\": 3389}]} " +
+			"(computers: name 1-32 letters, digits, . _ -, unique in the list; address IPv4 or host name; port 1-65535, default 3389). null clears a module; modules not named stay. A bad value changes nothing and says which row and field.",
+		InputSchema: obj(map[string]any{"name": nameProp, "features": map[string]any{"type": "object", "description": "module name -> its value (a list of rows, or one object)"}}, "name", "features"),
+		Annotations: writes,
+		Run: func(api Doer, a map[string]any) (any, error) {
+			n, err := str(a, "name", true)
+			if err != nil {
+				return nil, err
+			}
+			var out map[string]any
+			if err := api.Do("PATCH", "/v1/users/"+url.PathEscape(n), map[string]any{"features": a["features"]}, &out); err != nil {
+				return nil, err
+			}
+			return map[string]any{"name": out["name"], "features": out["features"]}, nil
 		}},
 	{Name: "user_disable", Title: "Disable a user",
 		Description: "Disable a user: no more logins anywhere (LDAP, SSO, Wi-Fi, shares). The account and its password stay; user_enable undoes it. The last administrator cannot be disabled.",

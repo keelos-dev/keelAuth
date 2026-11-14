@@ -28,6 +28,8 @@ type SyncUser struct {
 	// TOTPSetAt: when that authenticator was set up ("" without one): a gateway that let a
 	// computer in on a code drops it when this changes (docs/02 §9.2).
 	TOTPSetAt string `json:"totp_set_at"`
+	// Features: the feature modules this sync key reads (features.go), when on.
+	Features map[string]any `json:"features,omitempty"`
 }
 
 type SyncGroup struct {
@@ -64,6 +66,9 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 		su := SyncUser{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, Enabled: u.Enabled, Groups: u.Groups, Mail: u.Mail, Addresses: ac.addresses(u.Name), TOTP: s.totpNeeded(u.Name), TOTPSetAt: s.totpSetAt(u.Name)}
 		if n := s.native(); n != nil && secrets {
 			su.PasswordHash = n.PasswordHash(u.Name)
+		}
+		if key != nil && len(key.Features) > 0 {
+			su.Features = s.featureValues(u.Name, key.Features)
 		}
 		if su.Groups == nil {
 			su.Groups = []string{}

@@ -193,7 +193,7 @@ func TestUsersAndNTHash(t *testing.T) {
 	if r.s.State().Revision <= rev {
 		t.Error("revision did not go up")
 	}
-	want := "alice\tNT-Password := 0x" + strings.ToUpper(nt)
+	want := "\"alice\"\tNT-Password := 0x" + strings.ToUpper(nt)
 	if !strings.Contains(r.authorize(), want) {
 		t.Errorf("authorize lacks %q:\n%s", want, r.authorize())
 	}
@@ -535,7 +535,7 @@ func TestMCP(t *testing.T) {
 	if isErr || !strings.Contains(txt, `"password"`) || !strings.Contains(txt, `"must_change": true`) {
 		t.Errorf("user_add: %v %s", isErr, txt)
 	}
-	if !strings.Contains(r.authorize(), "dora\t") {
+	if !strings.Contains(r.authorize(), "\"dora\"\t") {
 		t.Error("user added over MCP has no NT hash in RADIUS")
 	}
 	_, out = mcpCall(r, tok, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"user_disable","arguments":{"name":"dora"}}}`)

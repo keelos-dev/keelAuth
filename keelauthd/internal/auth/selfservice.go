@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -63,6 +64,8 @@ type selfReq struct {
 	Code        string `json:"code"`
 	NewPassword string `json:"new_password"`
 	NewCode     string `json:"new_code"`
+	// Features: the person's own values of self_edit feature modules (features.go)
+	Features map[string]json.RawMessage `json:"features"`
 }
 
 // selfProve: the key may do this, and the person is who they say (password, and the code
@@ -81,7 +84,7 @@ func (s *Server) selfProve(r *http.Request) (*selfReq, *engine.User, *Token, err
 	req.Name = name
 	now := s.now()
 	badLogin := coded(http.StatusUnauthorized, "bad_login", "wrong user name or password")
-	if !ValidName(name) || name == BindAccount || req.Password == "" {
+	if !ValidUserName(name) || name == BindAccount || req.Password == "" {
 		return nil, nil, nil, badLogin
 	}
 	if s.sessions.blocked(name, now) {
@@ -133,6 +136,9 @@ func (s *Server) selfStatus(name string, key *Token) (any, error) {
 	out := map[string]any{"name": u.Name, "display_name": u.DisplayName, "groups": u.Groups,
 		"totp": s.totpNeeded(name), "totp_set_at": s.totpSetAt(name), "must_change": false, "password_set_at": "",
 		"needs": s.selfNeeds(name, key), "password_rules": map[string]any{"min_length": minLen, "strength": strength}}
+	if key != nil && len(key.Features) > 0 {
+		out["features"] = s.featureValues(name, key.Features)
+	}
 	if u.Groups == nil {
 		out["groups"] = []string{}
 	}

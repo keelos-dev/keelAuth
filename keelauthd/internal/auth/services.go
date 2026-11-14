@@ -421,7 +421,7 @@ func (s *Server) RadiusFiles(st *State, users []engine.User) (clients, authorize
 		if err != nil {
 			return "", "", fmt.Errorf("user %s: %v", n, err)
 		}
-		fmt.Fprintf(&a, "%s\tNT-Password := 0x%s\n", n, strings.ToUpper(nt))
+		fmt.Fprintf(&a, "\"%s\"\tNT-Password := 0x%s\n", n, strings.ToUpper(nt)) // quoted: a name may have dots
 	}
 	return c.String(), a.String(), nil
 }

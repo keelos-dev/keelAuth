@@ -17,9 +17,11 @@ type moduleDef struct {
 	Name    string
 	Default bool // on when the setting says nothing
 	Native  bool // keelauthd's own listener (native engine); Kanidm serves it itself otherwise
+	Feature bool // a feature module: attributes on an account (features.go), not a way in
 }
 
-var moduleDefs = []moduleDef{{"ldap", true, true}, {"oidc", true, true}, {"radius", true, false}, {"phone", false, false}, {"totp", false, false}}
+// (the feature modules are added by features.go's init)
+var moduleDefs = []moduleDef{{"ldap", true, true, false}, {"oidc", true, true, false}, {"radius", true, false, false}, {"phone", false, false, false}, {"totp", false, false, false}}
 
 func findModule(name string) (moduleDef, bool) {
 	for _, d := range moduleDefs {
@@ -33,6 +35,7 @@ func findModule(name string) (moduleDef, bool) {
 // ModuleOut is a module on the API.
 type ModuleOut struct {
 	Name    string   `json:"name"`
+	Kind    string   `json:"kind"` // way (a way in) | feature (attributes on an account)
 	Enabled bool     `json:"enabled"`
 	Default bool     `json:"default"`
 	Fixed   bool     `json:"fixed"` // Kanidm's: cannot be switched
@@ -101,8 +104,11 @@ func (s *Server) Modules(svc map[string]error) []ModuleOut {
 	native := s.engineKind() == EngineNative
 	out := []ModuleOut{}
 	for _, d := range moduleDefs {
-		m := ModuleOut{Name: d.Name, Enabled: s.moduleOn(d.Name), Default: d.Default, Fixed: s.moduleFixed(d), Ports: s.modulePorts(d.Name)}
-		if m.Enabled {
+		m := ModuleOut{Name: d.Name, Kind: "way", Enabled: s.moduleOn(d.Name), Default: d.Default, Fixed: s.moduleFixed(d), Ports: s.modulePorts(d.Name)}
+		if d.Feature {
+			m.Kind = "feature"
+		}
+		if m.Enabled && !d.Feature {
 			var up bool
 			var err error
 			switch {
@@ -158,7 +164,7 @@ func (s *Server) putModule(r *http.Request) (any, error) {
 		}
 		st.Modules[name] = *req.Enabled
 		return nil
-	}, false); err != nil {
+	}, d.Feature); err != nil {
 		return nil, err
 	}
 	state := "off"

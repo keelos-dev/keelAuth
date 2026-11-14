@@ -803,3 +803,8 @@ textarea.ka-pem { width: 100%; font-family: var(--mono, monospace); font-size: 1
 details.inline { display: inline-block; vertical-align: top; }
 details.inline summary { cursor: pointer; }
 details.inline[open] span { display: block; margin-top: 2px; }
+
+/* feature modules in the user dialog (features.js): a row per entry, inputs fill the cells */
+fieldset.feat table.feat-rows input { width: 100%; min-width: 6em; box-sizing: border-box; }
+fieldset.feat { margin-top: 8px; }
+fieldset.feat table.feat-rows button { white-space: nowrap; }

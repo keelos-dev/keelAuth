@@ -53,10 +53,11 @@ type TokenOut struct {
 	Key      string `json:"key,omitempty"`
 	// A sync key's: the group whose members it serves ("" = every account), whether it is
 	// given password hashes, whether its verify wants an authenticator app.
-	Group       string `json:"group,omitempty"`
-	Secrets     *bool  `json:"secrets,omitempty"`
-	RequireTOTP bool   `json:"require_totp,omitempty"`
-	SelfService bool   `json:"self_service,omitempty"`
+	Group       string   `json:"group,omitempty"`
+	Secrets     *bool    `json:"secrets,omitempty"`
+	RequireTOTP bool     `json:"require_totp,omitempty"`
+	SelfService bool     `json:"self_service,omitempty"`
+	Features    []string `json:"features,omitempty"`
 }
 
 func tokensOut(ts []Token) []TokenOut {
@@ -73,6 +74,7 @@ func syncKeysOut(st *State) []TokenOut {
 	for i, k := range st.SyncKeys {
 		secrets := !k.NoSecrets
 		out[i].Group, out[i].Secrets, out[i].RequireTOTP, out[i].SelfService = st.ServiceGroups[accessSync+k.ID], &secrets, k.RequireTOTP, k.SelfService
+		out[i].Features = k.Features
 	}
 	return out
 }
@@ -119,17 +121,22 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 		Name  string `json:"name"`
 		Scope string `json:"scope"`
 		// a sync key's (state.go Token; access.go for the group)
-		Group       string `json:"group"`
-		Secrets     *bool  `json:"secrets"`
-		RequireTOTP bool   `json:"require_totp"`
-		SelfService bool   `json:"self_service"`
+		Group       string   `json:"group"`
+		Secrets     *bool    `json:"secrets"`
+		RequireTOTP bool     `json:"require_totp"`
+		SelfService bool     `json:"self_service"`
+		Features    []string `json:"features"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
 	}
 	req.Group = strings.ToLower(strings.TrimSpace(req.Group))
-	if kind != kindSync && (req.Group != "" || req.Secrets != nil || req.RequireTOTP || req.SelfService) {
-		return nil, bad("group, secrets, require_totp and self_service are a sync key's")
+	if kind != kindSync && (req.Group != "" || req.Secrets != nil || req.RequireTOTP || req.SelfService || len(req.Features) > 0) {
+		return nil, bad("group, secrets, require_totp, self_service and features are a sync key's")
+	}
+	feats, err := checkKeyFeatures(req.Features)
+	if err != nil {
+		return nil, err
 	}
 	if req.Group != "" && !ValidName(req.Group) {
 		return nil, bad("group %q: a lowercase letter, then lowercase letters, digits, - or _ (at most 32)", req.Group)
@@ -148,8 +155,8 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 	raw := secret.Random(24)
 	tok := tokenPrefixes[kind] + raw
 	t := Token{ID: raw[:8], Name: req.Name, Hash: hashToken(tok), Created: s.now().Format(time.RFC3339), Scope: req.Scope,
-		NoSecrets: req.Secrets != nil && !*req.Secrets, RequireTOTP: req.RequireTOTP, SelfService: req.SelfService}
-	err := s.update(func(st *State) error {
+		NoSecrets: req.Secrets != nil && !*req.Secrets, RequireTOTP: req.RequireTOTP, SelfService: req.SelfService, Features: feats}
+	err = s.update(func(st *State) error {
 		l := tokenList(st, kind)
 		*l = append(*l, t)
 		return nil
@@ -167,7 +174,7 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 			}
 		}
 		secrets := !t.NoSecrets
-		o.Group, o.Secrets, o.RequireTOTP, o.SelfService = req.Group, &secrets, t.RequireTOTP, t.SelfService
+		o.Group, o.Secrets, o.RequireTOTP, o.SelfService, o.Features = req.Group, &secrets, t.RequireTOTP, t.SelfService, t.Features
 	}
 	if kind == kindMCP {
 		o.Token = tok

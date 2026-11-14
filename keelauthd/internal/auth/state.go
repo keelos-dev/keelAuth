@@ -51,6 +51,8 @@ type UserData struct {
 	// TOTP: the sealed secret of the user's second-factor code (totpmod.go); "" = none.
 	TOTP      string `json:"totp,omitempty"`
 	TOTPSetAt string `json:"totp_set_at,omitempty"`
+	// Features: the values of the feature modules (features.go), by module name.
+	Features map[string]json.RawMessage `json:"features,omitempty"`
 }
 
 // GroupData is what keelauthd keeps of a group beside the engine: nothing now (what a group
@@ -91,6 +93,8 @@ type Token struct {
 	// SelfService: a sync key whose front end may do an employee's own business for them
 	// (POST /v1/sync/self…, selfservice.go, docs/02 §9.5).
 	SelfService bool `json:"self_service,omitempty"`
+	// Features: the feature modules this sync key reads (features.go); none by default.
+	Features []string `json:"features,omitempty"`
 }
 
 // State is keelauthd's own data. Accounts themselves are in the engine.
@@ -205,6 +209,7 @@ func (s *State) Clone() *State {
 	for k, v := range s.Users {
 		u := *v
 		u.MailDomains = slices.Clone(v.MailDomains)
+		u.Features = maps.Clone(v.Features)
 		c.Users[k] = &u
 	}
 	c.Groups = map[string]*GroupData{}
@@ -220,6 +225,7 @@ func (s *State) Clone() *State {
 	c.SyncKeys = slices.Clone(s.SyncKeys)
 	for i := range c.SyncKeys {
 		c.SyncKeys[i].MailDomains = slices.Clone(s.SyncKeys[i].MailDomains)
+		c.SyncKeys[i].Features = slices.Clone(s.SyncKeys[i].Features)
 	}
 	c.APIKeys = slices.Clone(s.APIKeys)
 	c.Devices = slices.Clone(s.Devices)
@@ -298,6 +304,13 @@ var nameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // ValidName: lower-case letters, digits, - and _, a letter first, at most 32.
 func ValidName(n string) bool { return nameRE.MatchString(n) }
+
+// userNameRE: an account's name may also have dots inside (first.last, as mail addresses are;
+// docs/02 §11): not first, not last, never two in a row. Groups and the rest keep nameRE.
+var userNameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*$`)
+
+// ValidUserName: lower-case letters, digits, -, _ and inner dots, a letter first, at most 32.
+func ValidUserName(n string) bool { return len(n) <= 32 && userNameRE.MatchString(n) }
 
 // reserved names: the engine's own accounts and keelAuth's.
 func reserved(n string) bool {

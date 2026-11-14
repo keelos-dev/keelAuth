@@ -267,6 +267,8 @@ func (s *Server) buildHandler() http.Handler {
 	a("PUT /v1/consumers/{id}", s.putConsumer)
 	a("GET /v1/modules", s.getModules)
 	a("PUT /v1/modules/{name}", s.putModule)
+	a("GET /v1/features", s.getFeatures)
+	a("DELETE /v1/features/{name}/data", s.deleteFeatureData)
 	a("GET /v1/ldap/devices", s.getDevices)
 	a("POST /v1/ldap/devices", s.postDevice)
 	a("POST /v1/ldap/devices/{name}/password", s.postDevicePassword)
@@ -318,6 +320,7 @@ func (s *Server) buildHandler() http.Handler {
 	m.HandleFunc("POST /v1/sync/self/password", s.need(s.syncer, s.wrap(s.ready(s.postSelfPassword))))
 	m.HandleFunc("POST /v1/sync/self/totp", s.need(s.syncer, s.wrap(s.ready(s.postSelfTOTP))))
 	m.HandleFunc("POST /v1/sync/self/totp/confirm", s.need(s.syncer, s.wrap(s.ready(s.postSelfTOTPConfirm))))
+	m.HandleFunc("POST /v1/sync/self/features", s.need(s.syncer, s.wrap(s.ready(s.postSelfFeatures))))
 	m.Handle("POST /mcp", s.need(s.mcpCaller, s.mcpHandler()))
 	m.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, notFound("no such API: %s %s", r.Method, r.URL.Path))

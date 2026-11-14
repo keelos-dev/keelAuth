@@ -261,7 +261,7 @@ func (s *Server) postLogin(r *http.Request) (any, error) {
 	}
 	name := strings.ToLower(strings.TrimSpace(req.Name))
 	now := s.now()
-	if !ValidName(name) || name == BindAccount || req.Password == "" {
+	if !ValidUserName(name) || name == BindAccount || req.Password == "" {
 		return nil, coded(http.StatusUnauthorized, "bad_login", "wrong user name or password")
 	}
 	if s.sessions.blocked(name, now) {

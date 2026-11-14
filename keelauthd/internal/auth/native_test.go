@@ -591,7 +591,7 @@ func TestModules(t *testing.T) {
 		return out
 	}
 	ms := r.ok("GET", "/v1/modules", nil)["modules"].([]any)
-	if got := names(ms); got != "ldap:true/false oidc:true/false radius:true/false phone:false/false totp:false/false " {
+	if got := names(ms); got != "ldap:true/false oidc:true/false radius:true/false phone:false/false totp:false/false computers:false/false " {
 		t.Fatalf("modules: %s", got)
 	}
 	st := r.ok("GET", "/v1/status", nil)
@@ -599,7 +599,7 @@ func TestModules(t *testing.T) {
 		t.Fatalf("ports: %s", p)
 	}
 	ms = r.ok("PUT", "/v1/modules/radius", map[string]any{"enabled": false})["modules"].([]any)
-	if got := names(ms); got != "ldap:true/false oidc:true/false radius:false/false phone:false/false totp:false/false " {
+	if got := names(ms); got != "ldap:true/false oidc:true/false radius:false/false phone:false/false totp:false/false computers:false/false " {
 		t.Fatalf("after off: %s", got)
 	}
 	st = r.ok("GET", "/v1/status", nil)

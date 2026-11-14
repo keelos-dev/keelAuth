@@ -6,6 +6,7 @@ import { fmtTime, pwRules, t } from "./i18n.js";
 import { ask, Dialog, FormDialog, Spinner, toast } from "./ui.js";
 import { Phones } from "./phones.js";
 import { Totp } from "./totp.js";
+import { FeatureFields } from "./features.js";
 
 // usePwPolicy: the password rules in force (status.password_policy), for hints and minlength.
 export function usePwPolicy() {
@@ -18,6 +19,8 @@ export const pwMin = (p) => String(p && p.min_length ? p.min_length : 15);
 const fail = (e) => toast(e.message, 8000);
 const enc = encodeURIComponent;
 export const namePattern = "[a-z][a-z0-9_\\-]{0,31}";
+// an account's name may also have inner dots (first.last, keelauthd ValidUserName; groups may not)
+export const userNamePattern = "(?=.{1,32}$)[a-z][a-z0-9_\\-]*(\\.[a-z0-9_\\-]+)*";
 
 // Shown: something to hand on that is shown only now (a password, a secret, a token).
 export function Shown({ title, rows, note, onClose }) {
@@ -53,17 +56,18 @@ function MailPicks({ domains, name, value, onChange }) {
     <span class="muted small">${t("users.mailboxeshint")}</span></fieldset>`;
 }
 
-function NewUser({ groups, consumers, domains, onClose, onDone }) {
+function NewUser({ groups, consumers, domains, features, onClose, onDone }) {
   const pol = usePwPolicy();
-  const [f, setF] = useState({ name: "", display_name: "", mail: "", password: "", auto: true, must_change: true, groups: [], mail_domains: [] });
+  const [f, setF] = useState({ name: "", display_name: "", mail: "", password: "", auto: true, must_change: true, groups: [], mail_domains: [], features: {} });
   const set = (k) => (e) => { const v = e.target.type === "checkbox" ? e.target.checked : e.target.value; setF((f) => ({ ...f, [k]: v })); };
   const save = async () => {
     const body = { name: f.name.trim(), display_name: f.display_name.trim(), mail: f.mail.trim(), must_change: f.must_change, groups: f.groups, mail_domains: f.mail_domains };
+    if (Object.keys(f.features).length) body.features = f.features;
     if (!f.auto) body.password = f.password;
     onDone(await api("POST", "v1/users", body));
   };
   return html`<${FormDialog} title=${t("users.new")} submit=${t("users.add")} onSubmit=${save} onClose=${onClose}>
-    <label>${t("users.name")}<input type="text" required pattern=${namePattern} spellcheck="false" autocapitalize="off" value=${f.name} onInput=${set("name")} />
+    <label>${t("users.name")}<input type="text" required pattern=${userNamePattern} spellcheck="false" autocapitalize="off" value=${f.name} onInput=${set("name")} />
       <span class="muted small">${t("users.namehint")}</span></label>
     <label>${t("users.display")}<input type="text" value=${f.display_name} onInput=${set("display_name")} /></label>
     <label>${t("users.mail")}<input type="text" inputmode="email" value=${f.mail} onInput=${set("mail")} /></label>
@@ -73,19 +77,26 @@ function NewUser({ groups, consumers, domains, onClose, onDone }) {
       <span class="muted small">${pwRules(pol)}</span></label>`}
     <label class="check"><input type="checkbox" checked=${f.must_change} onChange=${set("must_change")} /> ${t("users.mustchange")}</label>
     <${GroupPicks} groups=${groups} consumers=${consumers} value=${f.groups} onChange=${(up) => setF((f) => ({ ...f, groups: up(f.groups) }))} />
+    <${FeatureFields} features=${features} value=${f.features} onChange=${(up) => setF((f) => ({ ...f, features: up(f.features) }))} />
   <//>`;
 }
 
-function EditUser({ user, groups, consumers, domains, onClose, onDone }) {
-  const [f, setF] = useState({ display_name: user.display_name, mail: user.mail, groups: user.groups, must_change: user.must_change, mail_domains: user.mail_domains || [] });
+function EditUser({ user, groups, consumers, domains, features, onClose, onDone }) {
+  const [f, setF] = useState({ display_name: user.display_name, mail: user.mail, groups: user.groups, must_change: user.must_change, mail_domains: user.mail_domains || [],
+    features: JSON.parse(JSON.stringify(user.features || {})) });
   const set = (k) => (e) => { const v = e.target.type === "checkbox" ? e.target.checked : e.target.value; setF((f) => ({ ...f, [k]: v })); };
-  const save = async () => { await api("PATCH", "v1/users/" + enc(user.name), { ...f }); onDone(); };
+  const save = async () => {
+    const body = { ...f };
+    if (!Object.keys(body.features).length) delete body.features;
+    await api("PATCH", "v1/users/" + enc(user.name), body); onDone();
+  };
   return html`<${FormDialog} title=${t("users.edit", user.name)} submit=${t("save")} onSubmit=${save} onClose=${onClose}>
     <label>${t("users.display")}<input type="text" value=${f.display_name} onInput=${set("display_name")} /></label>
     <label>${t("users.mail")}<input type="text" inputmode="email" value=${f.mail} onInput=${set("mail")} /></label>
     <${MailPicks} domains=${domains} name=${user.name} value=${f.mail_domains} onChange=${(up) => setF((f) => ({ ...f, mail_domains: up(f.mail_domains) }))} />
     <${GroupPicks} groups=${groups} consumers=${consumers} value=${f.groups} onChange=${(up) => setF((f) => ({ ...f, groups: up(f.groups) }))} />
     <label class="check"><input type="checkbox" checked=${f.must_change} onChange=${set("must_change")} /> ${t("users.mustchange")}</label>
+    <${FeatureFields} features=${features} value=${f.features} onChange=${(up) => setF((f) => ({ ...f, features: up(f.features) }))} />
     <${Phones} user=${user.name} />
     <${Totp} user=${user.name} />
   <//>`;
@@ -123,8 +134,10 @@ export function Users() {
   const [domains, setDomains] = useState([]);
   const [dlg, setDlg] = useState(null);
   const [totpOn, setTotpOn] = useState(false); // the totp module: the list says who has set up an authenticator
-  const load = () => Promise.all([api("GET", "v1/users"), api("GET", "v1/groups"), api("GET", "v1/consumers").catch(() => ({})), api("GET", "v1/totp").catch(() => ({}))])
-    .then(([u, g, c, tp]) => { setUs(u.users || []); setGroups(g.groups || []); setConsumers(c.consumers || []); setDomains(c.mail_domains_ticked || []); setTotpOn(!!tp.enabled); }).catch(fail);
+  const [features, setFeatures] = useState([]); // the feature modules (features.js)
+  const load = () => Promise.all([api("GET", "v1/users"), api("GET", "v1/groups"), api("GET", "v1/consumers").catch(() => ({})), api("GET", "v1/totp").catch(() => ({})),
+    api("GET", "v1/features").catch(() => ({}))])
+    .then(([u, g, c, tp, fs]) => { setUs(u.users || []); setGroups(g.groups || []); setConsumers(c.consumers || []); setDomains(c.mail_domains_ticked || []); setTotpOn(!!tp.enabled); setFeatures(fs.features || []); }).catch(fail);
   useEffect(() => { load(); }, []);
   if (!us) return html`<${Spinner} />`;
   const close = () => setDlg(null);
@@ -149,9 +162,9 @@ export function Users() {
           <button class="btn" onClick=${() => toggle(u)}>${u.enabled ? t("users.disable") : t("users.enable")}</button>
           <button class="btn danger" onClick=${() => del(u)}>${t("delete")}</button></td></tr>`)}</tbody></table></div>`}
     <p class="muted small">${t("users.note")}</p>
-    ${dlg && dlg.kind === "new" && html`<${NewUser} groups=${groups} consumers=${consumers} domains=${domains} onClose=${close}
+    ${dlg && dlg.kind === "new" && html`<${NewUser} groups=${groups} consumers=${consumers} domains=${domains} features=${features} onClose=${close}
       onDone=${(u) => { load(); setTimeout(() => setDlg(u.password ? { kind: "shown", user: u, pw: u.password } : null)); }} />`}
-    ${dlg && dlg.kind === "edit" && html`<${EditUser} user=${dlg.user} groups=${groups} consumers=${consumers} domains=${domains} onClose=${close} onDone=${load} />`}
+    ${dlg && dlg.kind === "edit" && html`<${EditUser} user=${dlg.user} groups=${groups} consumers=${consumers} domains=${domains} features=${features} onClose=${close} onDone=${load} />`}
     ${dlg && dlg.kind === "reset" && html`<${ResetPassword} user=${dlg.user} onClose=${close}
       onDone=${(pw) => { load(); setTimeout(() => setDlg(pw ? { kind: "shown", user: dlg.user, pw } : null)); if (!pw) toast(t("users.pwset")); }} />`}
     ${dlg && dlg.kind === "shown" && html`<${Shown} title=${t("users.pwfor", dlg.user.name)} rows=${[[t("users.name"), dlg.user.name], [t("users.password"), dlg.pw]]}

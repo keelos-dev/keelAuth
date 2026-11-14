@@ -30,6 +30,8 @@ type verifyOut struct {
 	TOTP bool `json:"totp"`
 	// TOTPSetAt: as in the sync (when the authenticator was set up, "" without one).
 	TOTPSetAt string `json:"totp_set_at"`
+	// Features: the feature modules the sync key reads (features.go).
+	Features map[string]any `json:"features,omitempty"`
 	// MustChange: the administrator wants the password changed at the next login; the
 	// service decides whether it lets such an account in.
 	MustChange bool   `json:"must_change"`
@@ -54,7 +56,7 @@ func (s *Server) postSyncVerify(r *http.Request) (any, error) {
 	name := strings.ToLower(strings.TrimSpace(req.Name))
 	now := s.now()
 	badLogin := coded(http.StatusUnauthorized, "bad_login", "wrong user name or password")
-	if !ValidName(name) || name == BindAccount || req.Password == "" {
+	if !ValidUserName(name) || name == BindAccount || req.Password == "" {
 		return nil, badLogin
 	}
 	if s.sessions.blocked(name, now) {
@@ -110,6 +112,9 @@ func (s *Server) postSyncVerify(r *http.Request) (any, error) {
 	out := verifyOut{Name: u.Name, DisplayName: u.DisplayName, Groups: u.Groups, TOTP: asked, TOTPSetAt: s.totpSetAt(u.Name)}
 	if out.Groups == nil {
 		out.Groups = []string{}
+	}
+	if key != nil && len(key.Features) > 0 {
+		out.Features = s.featureValues(u.Name, key.Features)
 	}
 	if d := s.State().Users[name]; d != nil {
 		out.MustChange, out.SetAt = d.MustChange, d.SetAt

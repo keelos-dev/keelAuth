@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -31,6 +32,8 @@ type UserOut struct {
 	// A sync key with require_totp lets nobody without one in (docs/02 §9.2).
 	TOTP      bool   `json:"totp"`
 	TOTPSetAt string `json:"totp_set_at"`
+	// Features: the values of the feature modules that are on (features.go, docs/02 §10).
+	Features map[string]any `json:"features,omitempty"`
 }
 
 func (s *Server) userOut(u *engine.User) UserOut {
@@ -41,6 +44,9 @@ func (s *Server) userOut(u *engine.User) UserOut {
 	}
 	o.MailDomains, o.Addresses = []string{}, s.accessChecker().addresses(u.Name)
 	o.TOTP, o.TOTPSetAt = s.totpNeeded(u.Name), s.totpSetAt(u.Name)
+	if fs := s.enabledFeatures(); len(fs) > 0 {
+		o.Features = s.featureValues(u.Name, fs)
+	}
 	if d := s.State().Users[u.Name]; d != nil {
 		o.HasNT, o.SetAt, o.MustChange = d.NT != "", d.SetAt, d.MustChange
 		if d.MailDomains != nil {
@@ -164,8 +170,9 @@ func (s *Server) postUser(r *http.Request) (any, error) {
 		Groups      []string `json:"groups"`
 		// Access: the account's own list of services, before services had groups
 		// (access.go): taken and not kept, so an older caller is not refused.
-		Access      *[]string `json:"access"`
-		MailDomains []string  `json:"mail_domains"`
+		Access      *[]string                  `json:"access"`
+		MailDomains []string                   `json:"mail_domains"`
+		Features    map[string]json.RawMessage `json:"features"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
@@ -174,8 +181,8 @@ func (s *Server) postUser(r *http.Request) (any, error) {
 		return nil, err
 	}
 	switch {
-	case !ValidName(req.Name):
-		return nil, bad("user name %q: lower-case letters, digits, - and _, a letter first, at most 32", req.Name)
+	case !ValidUserName(req.Name):
+		return nil, bad("user name %q: lower-case letters, digits, -, _ and dots (not first, not last, not two in a row), a letter first, at most 32", req.Name)
 	case reserved(req.Name):
 		return nil, conflict("the name %q is reserved", req.Name)
 	case !validMail(req.Mail):
@@ -183,6 +190,15 @@ func (s *Server) postUser(r *http.Request) (any, error) {
 	}
 	if err := s.checkGroups(req.Groups); err != nil {
 		return nil, err
+	}
+	for n, raw := range req.Features { // checked before the account is made: no half-made accounts
+		f := findFeature(n)
+		if f == nil || !s.moduleOn(n) {
+			return nil, bad("no feature module %q that is on", n)
+		}
+		if _, err := s.normalizeFeature(f, req.Name, raw); err != nil {
+			return nil, bad("%v", err)
+		}
 	}
 	display := req.DisplayName
 	if display == "" {
@@ -224,6 +240,9 @@ func (s *Server) postUser(r *http.Request) (any, error) {
 		}
 		s.radiusLater()
 	}
+	if err := s.setFeatures(req.Name, req.Features, nil); err != nil {
+		return nil, err
+	}
 	u, err := s.lookupUser(req.Name)
 	if err != nil {
 		return nil, err
@@ -240,15 +259,20 @@ func (s *Server) patchUser(r *http.Request) (any, error) {
 		return nil, err
 	}
 	var req struct {
-		DisplayName *string   `json:"display_name"`
-		Mail        *string   `json:"mail"`
-		Groups      *[]string `json:"groups"`
-		Enabled     *bool     `json:"enabled"`
-		MustChange  *bool     `json:"must_change"`
-		Access      *[]string `json:"access"` // taken and not kept (postUser)
-		MailDomains *[]string `json:"mail_domains"`
+		DisplayName *string                    `json:"display_name"`
+		Mail        *string                    `json:"mail"`
+		Groups      *[]string                  `json:"groups"`
+		Enabled     *bool                      `json:"enabled"`
+		MustChange  *bool                      `json:"must_change"`
+		Access      *[]string                  `json:"access"` // taken and not kept (postUser)
+		MailDomains *[]string                  `json:"mail_domains"`
+		Features    map[string]json.RawMessage `json:"features"`
 	}
 	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	// the feature modules' values first: a refused one changes nothing else either
+	if err := s.setFeatures(u.Name, req.Features, nil); err != nil {
 		return nil, err
 	}
 	if req.Mail != nil && !validMail(*req.Mail) {

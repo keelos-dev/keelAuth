@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"keelauth/internal/engine"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -212,7 +213,7 @@ func (s *Server) getLoginState(r *http.Request) (any, error) {
 		admins = true
 	}
 	return map[string]any{"hostname": s.hostname(), "version": s.versionString(), "domain": st.Domain, "admins": admins,
-		"timezone": s.zoneFor(r), "locked": s.Locked(), "managed_by_keel": s.managed()}, nil
+		"timezone": s.zoneFor(r), "locked": s.Locked(), "managed_by_keel": s.managed(), "phone": s.moduleOn("phone"), "totp": s.moduleOn("totp")}, nil
 }
 
 func (s *Server) info(name string, admin bool, csrf string) SessionInfo {
@@ -249,6 +250,7 @@ func (s *Server) postLogin(r *http.Request) (any, error) {
 	var req struct {
 		Name     string `json:"name"`
 		Password string `json:"password"`
+		Code     string `json:"code"` // the second factor (totp module) when the user has one
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
@@ -278,16 +280,32 @@ func (s *Server) postLogin(r *http.Request) (any, error) {
 		s.Log.Printf("login %s from %s: wrong password", name, r.RemoteAddr)
 		return nil, coded(http.StatusUnauthorized, "bad_login", "wrong user name or password")
 	}
+	if s.totpNeeded(name) { // the second factor (totpmod.go)
+		if strings.TrimSpace(req.Code) == "" {
+			return nil, coded(http.StatusUnauthorized, "totp_required", "enter the code from your authenticator app")
+		}
+		if !s.totpCheck(name, req.Code) {
+			s.sessions.fail(name, now)
+			s.Log.Printf("login %s from %s: wrong code", name, r.RemoteAddr)
+			return nil, coded(http.StatusUnauthorized, "bad_code", "the code is wrong")
+		}
+	}
 	s.sessions.ok(name)
+	return s.loginAs(r, u, "password"), nil
+}
+
+// loginAs opens the page session for a user whose proof (the password, a phone) was checked.
+func (s *Server) loginAs(r *http.Request, u *engine.User, how string) SessionInfo {
+	name := u.Name
 	admin := slices.Contains(u.Groups, AdminGroup)
-	se := s.sessions.add(name, admin, now)
+	se := s.sessions.add(name, admin, s.now())
 	if w, ok := r.Context().Value(rwKey{}).(http.ResponseWriter); ok {
 		setCookie(w, r, se.ID, int(sessionMax.Seconds()))
 	}
-	s.Log.Printf("login %s from %s (admin %v)", name, r.RemoteAddr, admin)
+	s.Log.Printf("login %s from %s by %s (admin %v)", name, r.RemoteAddr, how, admin)
 	in := s.info(name, admin, se.CSRF)
 	in.Timezone = s.zoneFor(r)
-	return in, nil
+	return in
 }
 
 // rwKey carries the ResponseWriter to handlers that set cookies (login).

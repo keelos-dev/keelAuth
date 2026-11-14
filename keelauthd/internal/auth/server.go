@@ -3,6 +3,8 @@ package auth
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
+	"keelauth/internal/module/phone"
 	"log"
 	"net"
 	"net/http"
@@ -64,11 +66,15 @@ type Server struct {
 	// API answers 503 "starting" meanwhile (keel retries), not answers from a half-made engine
 	starting atomic.Bool
 
-	oidcSrv  *oidc.Server // the oidc module's provider (native engine; oidcmod.go)
-	sessions *sessions
-	backupMu sync.Mutex
-	hOnce    sync.Once
-	h        http.Handler
+	oidcSrv *oidc.Server // the oidc module's provider (native engine; oidcmod.go)
+	// modClosers: the modules' live listeners by module name (modules.go), closed when a
+	// module is switched off
+	modClosers map[string]io.Closer
+	phoneSvc   *phone.Service // the phone module (phonemod.go), made on first use
+	sessions   *sessions
+	backupMu   sync.Mutex
+	hOnce      sync.Once
+	h          http.Handler
 }
 
 func osMode(p uint32) os.FileMode { return os.FileMode(p) }

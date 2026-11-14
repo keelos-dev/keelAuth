@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 
 	"keelauth/internal/engine"
 )
@@ -17,16 +18,15 @@ type GroupOut struct {
 	MemberGroups []string `json:"member_groups"`
 	GID          int      `json:"gid"`
 	Builtin      bool     `json:"builtin"`
-	Access       []string `json:"access"` // the services its members may use (added to their own)
+	// Services: what being in the group gives (the ids of the services bound to it,
+	// access.go).
+	Services []string `json:"services"`
 }
 
-// groupView is groupOut with what keelauthd keeps of the group (the access list).
+// groupView is groupOut with what the group gives its members.
 func (s *Server) groupView(g *engine.Group) GroupOut {
 	o := groupOut(g)
-	o.Access = []string{}
-	if gd := s.State().Groups[g.Name]; gd != nil && gd.Access != nil {
-		o.Access = gd.Access
-	}
+	o.Services = servicesOf(s.State(), g.Name)
 	return o
 }
 
@@ -130,9 +130,10 @@ func (s *Server) setMembers(g *engine.Group, members []string) error {
 		return err
 	}
 	s.bump()
-	if g.Name == s.State().Radius.Group {
-		s.radiusLater()
-	}
+	// RADIUS's user list follows the groups: the Wi-Fi service's group (access.go), the older
+	// Radius.Group, and every group nested in either; the files are rewritten (and radiusd
+	// restarted) only when they come out different, so no need to work out which.
+	s.accessChanged()
 	return nil
 }
 
@@ -141,12 +142,9 @@ func (s *Server) postGroup(r *http.Request) (any, error) {
 		Name        string   `json:"name"`
 		Description string   `json:"description"`
 		Members     []string `json:"members"`
-		Access      []string `json:"access"`
+		Access      []string `json:"access"` // taken and not kept (users.go postUser)
 	}
 	if err := decode(r, &req); err != nil {
-		return nil, err
-	}
-	if err := s.checkAccess(req.Access); err != nil {
 		return nil, err
 	}
 	switch {
@@ -175,11 +173,6 @@ func (s *Server) postGroup(r *http.Request) (any, error) {
 	if g, err = s.lookupGroup(req.Name); err != nil {
 		return nil, err
 	}
-	if len(req.Access) > 0 {
-		if err := s.update(func(st *State) error { st.Groups[g.Name] = &GroupData{Access: cleanAccess(req.Access)}; return nil }, true); err != nil {
-			return nil, err
-		}
-	}
 	return s.groupView(g), nil
 }
 
@@ -191,22 +184,10 @@ func (s *Server) patchGroup(r *http.Request) (any, error) {
 	var req struct {
 		Description *string   `json:"description"`
 		Members     *[]string `json:"members"`
-		Access      *[]string `json:"access"`
+		Access      *[]string `json:"access"` // taken and not kept (users.go postUser)
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
-	}
-	if req.Access != nil {
-		if err := s.checkAccess(*req.Access); err != nil {
-			return nil, err
-		}
-		if err := s.update(func(st *State) error {
-			st.Groups[g.Name] = &GroupData{Access: cleanAccess(*req.Access)}
-			return nil
-		}, true); err != nil {
-			return nil, err
-		}
-		s.radiusLater()
 	}
 	if req.Description != nil {
 		if err := s.Eng.UpdateGroup(g.Name, req.Description); err != nil {
@@ -258,6 +239,10 @@ func (s *Server) deleteGroup(r *http.Request) (any, error) {
 	}
 	if s.State().Radius.Group == g.Name {
 		return nil, conflict("group %s decides who may use RADIUS: change that first", g.Name)
+	}
+	// a service left with a group that is gone would be closed to everybody without a word
+	if ids := servicesOf(s.State(), g.Name); len(ids) > 0 {
+		return nil, conflict("group %s decides who may use %s: give that another group first (Groups, Services)", g.Name, strings.Join(ids, ", "))
 	}
 	if err := s.Eng.DeleteGroup(g.Name); err != nil {
 		return nil, err

@@ -23,6 +23,7 @@ export function Overview({ status }) {
   if (!status) return html`<${Spinner} />`;
   const s = status;
   const c = s.counts || {};
+  const on = (m) => (s.modules || []).includes(m); // the enabled modules (settings → modules)
   const addr = (s.addresses || []).join(", ") || "–";
   const mk = s.master_key || { slots: [] };
   return html`<div class="stack">
@@ -41,7 +42,9 @@ export function Overview({ status }) {
           ${s.engine === "native"
             ? html`<tr><th>${t("ov.store")}</th><td>${up(s.services && s.services.store, s.service_errors && s.service_errors.store)}</td></tr>`
             : html`<tr><th>Kanidm (LDAP, SSO)</th><td>${up(s.services && s.services.kanidmd, s.service_errors && s.service_errors.kanidmd)}</td></tr>`}
-          <tr><th>FreeRADIUS</th><td>${up(s.services && s.services.radiusd, s.service_errors && s.service_errors.radiusd)}</td></tr>
+          ${s.engine === "native" && on("ldap") && html`<tr><th>LDAP</th><td>${up(s.services && s.services.ldap, s.service_errors && s.service_errors.ldap)}</td></tr>`}
+          ${s.engine === "native" && on("oidc") && html`<tr><th>SSO (OIDC)</th><td>${up(s.services && s.services.oidc, s.service_errors && s.service_errors.oidc)}</td></tr>`}
+          ${on("radius") && html`<tr><th>FreeRADIUS</th><td>${up(s.services && s.services.radiusd, s.service_errors && s.service_errors.radiusd)}</td></tr>`}
           ${s.managed_by_keel === false && html`<tr><th>keelOS</th><td class="muted">${t("ov.standalone")}</td></tr>`}
           ${s.keel && html`<tr><th>keelOS</th><td>${s.keel.registered ? html`<span class="badge ok">${t("ov.registered")}</span>` : html`<span class="warn">${s.keel.error || t("ov.notyet")}</span>`}</td></tr>`}
         </tbody></table></div>
@@ -54,9 +57,10 @@ export function Overview({ status }) {
         </tbody></table></div>
       <div class="card"><div class="row-head"><h3>${t("ov.ways")}</h3></div>
         <table class="kv-table"><tbody>
-          <tr><th><a href="#/access/ldap">LDAP</a></th><td class="mono">ldaps://${s.domain}:${s.ldap_port}</td></tr>
-          <tr><th><a href="#/access/sso">SSO (OIDC)</a></th><td class="mono">${s.origin}</td></tr>
-          <tr><th><a href="#/access/radius">RADIUS</a></th><td class="mono">${(s.addresses || [])[0] || s.domain}:${s.radius_port}/udp</td></tr>
+          ${on("ldap") && html`<tr><th><a href="#/access/ldap">LDAP</a></th><td class="mono">ldaps://${s.domain}:${s.ldap_port}</td></tr>`}
+          ${on("oidc") && html`<tr><th><a href="#/access/sso">SSO (OIDC)</a></th><td class="mono">${s.origin}</td></tr>`}
+          ${on("radius") && html`<tr><th><a href="#/access/radius">RADIUS</a></th><td class="mono">${(s.addresses || [])[0] || s.domain}:${s.radius_port}/udp</td></tr>`}
+          ${!(on("ldap") || on("oidc") || on("radius")) && html`<tr><td colspan="2" class="muted">${t("ov.nomodules")} <a href="#/settings/modules">${t("set.modules")}</a></td></tr>`}
         </tbody></table></div>
     </div>
   </div>`;

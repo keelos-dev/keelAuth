@@ -9,7 +9,7 @@ import { ask, FormDialog, Spinner, toast } from "./ui.js";
 import { Shown } from "./users.js";
 
 const fail = (e) => toast(e.message, 8000);
-const subs = ["general", "ai", "api", "sync", "cert"];
+const subs = ["general", "modules", "ai", "api", "sync", "cert"];
 
 function ZoneDialog({ zone, onClose, onDone }) {
   const [z, setZ] = useState(zone);
@@ -117,6 +117,31 @@ function General() {
   </div>`;
 }
 
+// Modules: keelAuth's optional ways in, each switched on or off (keelauthd modules.go)
+function Modules() {
+  const [d, setD] = useState(null);
+  const load = () => api("GET", "v1/modules").then((x) => setD(x.modules)).catch(fail);
+  useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, []);
+  if (!d) return html`<${Spinner} />`;
+  const flip = async (m) => {
+    if (m.enabled && !await ask(t("mod.offq", t("mod." + m.name)))) return;
+    try { setD((await api("PUT", "v1/modules/" + m.name, { enabled: !m.enabled })).modules); } catch (e) { fail(e); }
+  };
+  const state = (m) => !m.enabled ? html`<span class="muted">${t("mod.off")}</span>`
+    : m.up ? html`<span class="badge ok">${t("mod.on")}</span>`
+    : html`<span class="warn">${t("mod.notup")}${m.error ? ": " + m.error : ""}</span>`;
+  return html`<div class="card"><div class="row-head"><h3>${t("set.modules")}</h3></div>
+    <p class="ka-for">${t("mod.for")}</p>
+    <table class="data plain"><thead><tr><th>${t("mod.module")}</th><th>${t("mod.what")}</th><th>${t("mod.ports")}</th><th>${t("mod.state")}</th><th></th></tr></thead><tbody>
+      ${d.map((m) => html`<tr key=${m.name}><td>${t("mod." + m.name)}</td><td class="muted">${t("mod." + m.name + ".for")}</td>
+        <td class="mono">${m.ports.join(", ")}</td><td>${state(m)}</td>
+        <td class="actions">${m.fixed ? html`<span class="muted small">${t("mod.fixed")}</span>`
+          : html`<button class="btn" onClick=${() => flip(m)}>${m.enabled ? t("mod.disable") : t("mod.enable")}</button>`}</td></tr>`)}
+    </tbody></table>
+    <p class="muted small">${t("mod.note")}</p>
+  </div>`;
+}
+
 // NewToken: scopes given = an API key, with its scope (api.scope.<name> says what each allows)
 function NewToken({ title, onClose, onDone, path, scopes }) {
   const [name, setName] = useState("");
@@ -131,11 +156,27 @@ function NewToken({ title, onClose, onDone, path, scopes }) {
   <//>`;
 }
 
-function TokenList({ list, onDelete, scope }) {
+// NewSyncKey: a sync key with whose accounts it is given (its group), whether it gets their
+// password hashes, and whether a login through it needs the authenticator app's code.
+function NewSyncKey({ onClose, onDone }) {
+  const [f, setF] = useState({ name: "", group: "", secrets: true, require_totp: false });
+  const set = (k) => (e) => { const v = e.target.type === "checkbox" ? e.target.checked : e.target.value; setF((f) => ({ ...f, [k]: v })); };
+  const save = async () => onDone(await api("POST", "v1/sync/keys", { name: f.name.trim(), group: f.group.trim(), secrets: f.secrets, require_totp: f.require_totp }));
+  return html`<${FormDialog} title=${t("sync.new")} submit=${t("tok.make")} onSubmit=${save} onClose=${onClose}>
+    <label>${t("tok.name")}<input type="text" required maxlength="64" value=${f.name} onInput=${set("name")} />
+      <span class="muted small">${t("tok.namehint")}</span></label>
+    <label>${t("sync.group")}<input type="text" pattern="[a-z][a-z0-9_\\-]{0,31}" spellcheck="false" autocapitalize="off" value=${f.group} onInput=${set("group")} />
+      <span class="muted small">${t("sync.grouphint")}</span></label>
+    <label class="check"><input type="checkbox" checked=${f.secrets} onChange=${set("secrets")} /> ${t("sync.secrets")}</label>
+    <label class="check"><input type="checkbox" checked=${f.require_totp} onChange=${set("require_totp")} /> ${t("sync.totp")}</label>
+  <//>`;
+}
+
+function TokenList({ list, onDelete, scope, extra }) {
   if (!list.length) return html`<p class="muted">${t("tok.none")}</p>`;
   return html`<div class="table-wrap tall"><table class="data plain">
     <thead><tr><th>${t("tok.name")}</th><th>ID</th>${scope && html`<th>${t("api.scope")}</th>`}<th>${t("tok.created")}</th><th>${t("tok.used")}</th><th></th></tr></thead>
-    <tbody>${list.map((x) => html`<tr><td><b>${x.name}</b></td><td class="mono">${x.id}</td>${scope && html`<td>${t("api.scope." + x.scope)}</td>`}<td>${fmtTime(x.created)}</td><td>${x.last_used ? fmtTime(x.last_used) : "–"}</td>
+    <tbody>${list.map((x) => html`<tr><td><b>${x.name}</b>${extra ? extra(x) : ""}</td><td class="mono">${x.id}</td>${scope && html`<td>${t("api.scope." + x.scope)}</td>`}<td>${fmtTime(x.created)}</td><td>${x.last_used ? fmtTime(x.last_used) : "–"}</td>
       <td><button class="btn danger" onClick=${() => onDelete(x)}>${t("tok.revoke")}</button></td></tr>`)}</tbody></table></div>`;
 }
 
@@ -205,8 +246,8 @@ function Sync() {
   };
   return html`<div class="card"><div class="row-head"><h3>${t("sync.title")}</h3><button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("sync.new")}</button></div>
     <p class="ka-for">${t("sync.for")}</p>
-    <${TokenList} list=${d.keys} onDelete=${del} />
-    ${dlg && dlg.kind === "new" && html`<${NewToken} title=${t("sync.new")} path="v1/sync/keys" onClose=${() => setDlg(null)}
+    <${TokenList} list=${d.keys} onDelete=${del} extra=${(x) => html`${x.group ? html` <span class="badge">${x.group}</span>` : ""}${x.secrets === false ? html` <span class="badge">${t("sync.nosecrets")}</span>` : ""}${x.require_totp ? html` <span class="badge">${t("sync.totpbadge")}</span>` : ""}`} />
+    ${dlg && dlg.kind === "new" && html`<${NewSyncKey} onClose=${() => setDlg(null)}
       onDone=${(x) => { load(); setTimeout(() => setDlg({ kind: "shown", x })); }} />`}
     ${dlg && dlg.kind === "shown" && html`<${Shown} title=${t("ai.made", dlg.x.name)} onClose=${() => setDlg(null)} rows=${[[t("sync.key"), dlg.x.key]]} />`}
   </div>`;
@@ -276,5 +317,5 @@ export function Settings({ sub }) {
   const tab = subs.includes(sub) ? sub : "general";
   return html`<nav class="subnav" aria-label=${t("nav.settings")}>${subs.map((k) => html`<a href=${"#/settings/" + k} class=${k === tab ? "on" : ""}
       aria-current=${k === tab ? "page" : null}>${t("set." + k)}</a>`)}</nav>
-    <div class="stack">${tab === "general" ? html`<${General} />` : tab === "ai" ? html`<${AI} />` : tab === "api" ? html`<${API} />` : tab === "sync" ? html`<${Sync} />` : html`<${Cert} />`}</div>`;
+    <div class="stack">${tab === "general" ? html`<${General} />` : tab === "modules" ? html`<${Modules} />` : tab === "ai" ? html`<${AI} />` : tab === "api" ? html`<${API} />` : tab === "sync" ? html`<${Sync} />` : html`<${Cert} />`}</div>`;
 }

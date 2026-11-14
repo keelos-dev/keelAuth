@@ -60,10 +60,14 @@ func (s *Server) engineKind() string {
 
 // serviceNames are the system services keelauthd runs: kanidmd only with Kanidm.
 func (s *Server) serviceNames() []string {
-	if s.engineKind() == EngineNative {
-		return []string{"radiusd"}
+	var out []string
+	if s.engineKind() != EngineNative {
+		out = append(out, "kanidmd")
 	}
-	return []string{"kanidmd", "radiusd"}
+	if s.moduleOn("radius") {
+		out = append(out, "radiusd")
+	}
+	return out
 }
 
 // bindNative gives the native store the master key for the OIDC client secrets and the

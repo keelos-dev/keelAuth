@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -71,7 +72,7 @@ func (d oidcDir) Person(name string) (oidc.Person, bool) {
 		gs = []string{}
 	}
 	mail := u.Mail
-	if as := addressesOf(d.s.State(), name); mail == "" && len(as) > 0 {
+	if as := d.s.accessChecker().addresses(name); mail == "" && len(as) > 0 {
 		mail = as[0]
 	}
 	return oidc.Person{Name: u.Name, DisplayName: u.DisplayName, Mail: mail, UUID: u.UUID, Groups: gs}, true
@@ -106,6 +107,10 @@ func (s *Server) oidcHandler(p *oidc.Server) http.Handler {
 			s.getBrandLogo(w, r)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/phone/") { // the phone's calls (phonemod.go): the QR code names this origin
+			s.Handler().ServeHTTP(w, r)
+			return
+		}
 		p.ServeHTTP(w, r)
 	})
 }
@@ -119,8 +124,12 @@ func (s *Server) serveOIDC(port int) {
 	}
 	tc := &tls.Config{GetCertificate: s.serverCert, MinVersion: tls.VersionTLS12}
 	addr := fmt.Sprintf(":%d", port)
-	srv := &http.Server{Handler: s.oidcHandler(p), ReadHeaderTimeout: 10 * time.Second, TLSConfig: tc, ErrorLog: nil}
+	h := s.oidcHandler(p)
 	for i := 0; ; i++ {
+		if !s.moduleOn("oidc") { // switched off (modules.go): wait for the switch
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			if i%12 == 0 {
@@ -130,9 +139,16 @@ func (s *Server) serveOIDC(port int) {
 			continue
 		}
 		s.Log.Printf("oidc: listening on %s (HTTPS)", addr)
+		srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, TLSConfig: tc, ErrorLog: nil}
+		s.setModuleCloser("oidc", srv)
 		oidcListening.Store(true)
 		err = srv.ServeTLS(ln, "", "")
 		oidcListening.Store(false)
+		s.setModuleCloser("oidc", nil)
+		if !s.moduleOn("oidc") {
+			s.Log.Printf("oidc: stopped (module off)")
+			continue
+		}
 		s.Log.Printf("oidc: %v", err)
 		time.Sleep(5 * time.Second)
 	}
@@ -144,3 +160,9 @@ func (s *Server) oidcSrvIfAny() *oidc.Server {
 	defer s.hmu.Unlock()
 	return s.oidcSrv
 }
+
+// PhoneOn / PhoneChallenge / PhonePoll: the phone module on the oidc module's login page
+// (oidc.PhoneLogin, phonemod.go).
+func (d oidcDir) PhoneOn() bool                                  { return d.s.moduleOn("phone") }
+func (d oidcDir) PhoneChallenge() (id, poll, qr string, ok bool) { return d.s.PhoneChallenge() }
+func (d oidcDir) PhonePoll(id, poll string) (state, user string) { return d.s.PhonePoll(id, poll) }

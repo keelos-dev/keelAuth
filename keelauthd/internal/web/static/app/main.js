@@ -16,6 +16,8 @@ import { Access } from "./access.js";
 import { Backups } from "./backup.js";
 import { Settings } from "./settings.js";
 import { OwnPassword } from "./password.js";
+import { Phones } from "./phones.js";
+import { Totp } from "./totp.js";
 import { Unlock } from "./unlock.js";
 
 // the theme: keelAuth's own; in keel's 账号 tab keel's (same origin, its setting)
@@ -61,16 +63,43 @@ function LoginPage({ children, lang, onLang, th, onTheme, brand }) {
   </div>`;
 }
 
+// PhoneLogin: the QR code for keelApp beside the password form (the phone module): a
+// challenge, polled every 2 s; approved = the session comes back with the poll.
+function PhoneLogin({ onLogin }) {
+  const [c, setC] = useState(null); // {id, poll, qr} | "expired"
+  const [started] = useState(() => Date.now());
+  const start = () => api("POST", "login/phone").then(setC).catch(() => setC("off"));
+  useEffect(() => { start(); }, []);
+  useEffect(() => {
+    if (!c || typeof c !== "object") return undefined;
+    const id = setInterval(async () => {
+      try {
+        const x = await api("GET", "login/phone/" + c.id + "?poll=" + encodeURIComponent(c.poll));
+        if (x.state === "approved") { clearInterval(id); onLogin(x.session); } else if (x.state === "expired") { clearInterval(id); if (Date.now() - started < 600000) start(); else setC("expired"); }
+      } catch (_) { /* next time */ }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [c && c.id]);
+  if (!c || c === "off") return null;
+  return html`<div class="phone-login">${c === "expired" ? html`<p class="warn small">${t("login.phoneexpired")}</p><button class="btn" onClick=${start}>${t("login.phoneagain")}</button>`
+    : html`<img src=${c.qr} alt="" /><p class="muted small">${t("login.phone")}</p>`}</div>`;
+}
+
 function Login({ onLogin, ...page }) {
   const [st, setSt] = useState(null);
   const [name, setName] = useState("");
   const [pw, setPw] = useState("");
+  const [code, setCode] = useState("");
+  const [needCode, setNeedCode] = useState(false); // the totp module asked for the second factor
   const [err, setErr] = useState("");
   useEffect(() => { api("GET", "login/state").then((x) => { setZone(x.timezone); setSt(x); }).catch(() => setSt({})); }, []);
   const submit = async (ev) => {
     ev.preventDefault();
     setErr("");
-    try { const s = await api("POST", "login", { name: name.trim(), password: pw }); setPw(""); onLogin(s); } catch (e) { setErr(e.message); }
+    try { const s = await api("POST", "login", { name: name.trim(), password: pw, code }); setPw(""); setCode(""); onLogin(s); } catch (e) {
+      if (e.body && e.body.code === "totp_required") { setNeedCode(true); return; }
+      setErr(e.message);
+    }
   };
   if (st && st.locked) {
     return html`<${LoginPage} ...${page}><h1>${t("lock.title")}</h1>
@@ -84,9 +113,12 @@ function Login({ onLogin, ...page }) {
         value=${name} onInput=${(e) => setName(e.target.value)} />
       <input type="password" autocomplete="current-password" placeholder=${t("login.password")} required
         value=${pw} onInput=${(e) => setPw(e.target.value)} />
+      ${needCode && html`<input type="text" inputmode="numeric" autocomplete="one-time-code" placeholder=${t("login.code")} required autofocus
+        value=${code} onInput=${(e) => setCode(e.target.value)} />`}
       <button type="submit" class="primary">${t("login.button")}</button>
     </form>
     ${err && html`<p class="error">${err}</p>`}
+    ${st && st.phone && html`<${PhoneLogin} onLogin=${onLogin} />`}
     <p class="muted small">${t("login.hint")}</p>
     ${st && st.admins === false && html`<p class="warn small">${t("login.noadmin")}</p>`}
   <//>`;
@@ -161,7 +193,8 @@ function App() {
   const logout = async () => { try { await api("POST", "logout"); } catch (_) { /* gone anyway */ } setSession(null); };
   // not an admin, or a password to change first: only the own password
   if (!session.admin || session.must_change) {
-    return html`<${LoginPage} ...${page}><${OwnPassword} session=${session} onDone=${() => api("GET", "session").then(got).catch(() => setSession(null))} onLogout=${logout} /><//>`;
+    return html`<${LoginPage} ...${page}><${OwnPassword} session=${session} onDone=${() => api("GET", "session").then(got).catch(() => setSession(null))} onLogout=${logout} />
+      ${!session.must_change && html`<${Phones} /><${Totp} />`}<//>`;
   }
   let body;
   if (status && status.master_key && status.master_key.locked) body = html`<div class="card ka-pw"><h3>${t("lock.title")}</h3><${Unlock} onDone=${() => location.reload()} /></div>`;
@@ -170,7 +203,7 @@ function App() {
   else if (hash.startsWith("#/access")) body = html`<${Access} sub=${hash.split("/")[2] || ""} status=${status} />`;
   else if (hash.startsWith("#/backup")) body = html`<${Backups} />`;
   else if (hash.startsWith("#/settings")) body = html`<${Settings} sub=${hash.split("/")[2] || ""} session=${session} />`;
-  else if (hash.startsWith("#/password")) body = html`<div class="card ka-pw"><${OwnPassword} session=${session} onDone=${() => { location.hash = "#/"; }} /></div>`;
+  else if (hash.startsWith("#/password")) body = html`<div class="card ka-pw"><${OwnPassword} session=${session} onDone=${() => { location.hash = "#/"; }} /><${Phones} /><${Totp} /></div>`;
   else body = html`<${Overview} status=${status} />`;
   // in keel's 账号 tab keel's frame (its title bar, the instance's name and domain) is enough:
   // no second dark bar, the tabs as a light strip; language and theme follow keel's

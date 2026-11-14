@@ -51,12 +51,27 @@ type TokenOut struct {
 	Scope    string `json:"scope,omitempty"`
 	Token    string `json:"token,omitempty"`
 	Key      string `json:"key,omitempty"`
+	// A sync key's: the group whose members it serves ("" = every account), whether it is
+	// given password hashes, whether its verify wants an authenticator app.
+	Group       string `json:"group,omitempty"`
+	Secrets     *bool  `json:"secrets,omitempty"`
+	RequireTOTP bool   `json:"require_totp,omitempty"`
 }
 
 func tokensOut(ts []Token) []TokenOut {
 	out := []TokenOut{}
 	for _, t := range ts {
 		out = append(out, TokenOut{ID: t.ID, Name: t.Name, Created: t.Created, LastUsed: t.LastUsed, Scope: t.Scope})
+	}
+	return out
+}
+
+// syncKeysOut is tokensOut with what only sync keys have.
+func syncKeysOut(st *State) []TokenOut {
+	out := tokensOut(st.SyncKeys)
+	for i, k := range st.SyncKeys {
+		secrets := !k.NoSecrets
+		out[i].Group, out[i].Secrets, out[i].RequireTOTP = st.ServiceGroups[accessSync+k.ID], &secrets, k.RequireTOTP
 	}
 	return out
 }
@@ -102,9 +117,20 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 	var req struct {
 		Name  string `json:"name"`
 		Scope string `json:"scope"`
+		// a sync key's (state.go Token; access.go for the group)
+		Group       string `json:"group"`
+		Secrets     *bool  `json:"secrets"`
+		RequireTOTP bool   `json:"require_totp"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
+	}
+	req.Group = strings.ToLower(strings.TrimSpace(req.Group))
+	if kind != kindSync && (req.Group != "" || req.Secrets != nil || req.RequireTOTP) {
+		return nil, bad("group, secrets and require_totp are a sync key's")
+	}
+	if req.Group != "" && !ValidName(req.Group) {
+		return nil, bad("group %q: a lowercase letter, then lowercase letters, digits, - or _ (at most 32)", req.Group)
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || len(req.Name) > 64 {
@@ -119,7 +145,8 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 	}
 	raw := secret.Random(24)
 	tok := tokenPrefixes[kind] + raw
-	t := Token{ID: raw[:8], Name: req.Name, Hash: hashToken(tok), Created: s.now().Format(time.RFC3339), Scope: req.Scope}
+	t := Token{ID: raw[:8], Name: req.Name, Hash: hashToken(tok), Created: s.now().Format(time.RFC3339), Scope: req.Scope,
+		NoSecrets: req.Secrets != nil && !*req.Secrets, RequireTOTP: req.RequireTOTP}
 	err := s.update(func(st *State) error {
 		l := tokenList(st, kind)
 		*l = append(*l, t)
@@ -129,6 +156,17 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 		return nil, err
 	}
 	o := TokenOut{ID: t.ID, Name: t.Name, Created: t.Created, Scope: t.Scope}
+	if kind == kindSync {
+		// the group first, the key shown after: a key without its group would serve everybody
+		if req.Group != "" {
+			if err := s.setServiceGroup(accessSync+t.ID, t.Name, req.Group); err != nil {
+				s.dropToken(t.ID, kind)
+				return nil, err
+			}
+		}
+		secrets := !t.NoSecrets
+		o.Group, o.Secrets, o.RequireTOTP = req.Group, &secrets, t.RequireTOTP
+	}
 	if kind == kindMCP {
 		o.Token = tok
 	} else {
@@ -143,6 +181,9 @@ func (s *Server) dropToken(id, kind string) (any, error) {
 		for i, t := range *l {
 			if t.ID == id {
 				*l = append((*l)[:i], (*l)[i+1:]...)
+				if kind == kindSync {
+					delete(st.ServiceGroups, accessSync+id)
+				}
 				return nil
 			}
 		}
@@ -162,7 +203,7 @@ func (s *Server) deleteToken(r *http.Request) (any, error) {
 	return s.dropToken(r.PathValue("id"), kindMCP)
 }
 func (s *Server) getSyncKeys(r *http.Request) (any, error) {
-	return map[string]any{"keys": tokensOut(s.State().SyncKeys)}, nil
+	return map[string]any{"keys": syncKeysOut(s.State())}, nil
 }
 func (s *Server) postSyncKey(r *http.Request) (any, error) { return s.makeToken(r, kindSync) }
 func (s *Server) deleteSyncKey(r *http.Request) (any, error) {

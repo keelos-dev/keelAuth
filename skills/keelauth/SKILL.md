@@ -1,6 +1,6 @@
 ---
 name: keelauth
-description: Manage an office's user accounts in keelAuth through its MCP tools (status, user_list, user_get, user_add, user_disable, user_enable, user_reset_password, group_list, group_add, group_members, oidc_list, oidc_create, radius_list, radius_client_add, ldap_info, ldap_device_add, ldap_device_password, ldap_device_delete, ldap_examples, cert_status, backup_now). Use this whenever the user mentions keelAuth, or asks to add, disable or remove an employee's account, reset somebody's password, put people into groups, connect an application to single sign-on (OIDC), let a Wi-Fi access point or VPN use RADIUS, connect a printer, a Linux machine, mail (Dovecot/Postfix), GitLab or Redmine over LDAP, or check whether the office's accounts server is healthy, even if they never say "MCP" and only ask something like "Anna starts on Monday, give her an account" or "Ben left, lock him out". Also use it to connect an assistant to keelAuth for the first time (keel-mcp, token, certificate fingerprint).
+description: Manage an office's user accounts in keelAuth through its MCP tools (status, user_list, user_get, user_add, user_disable, user_enable, user_reset_password, group_list, group_add, group_members, service_list, service_group, oidc_list, oidc_create, radius_list, radius_client_add, ldap_info, ldap_device_add, ldap_device_password, ldap_device_delete, ldap_examples, cert_status, backup_now). Use this whenever the user mentions keelAuth, or asks to add, disable or remove an employee's account, reset somebody's password, put people into groups, connect an application to single sign-on (OIDC), let a Wi-Fi access point or VPN use RADIUS, connect a printer, a Linux machine, mail (Dovecot/Postfix), GitLab or Redmine over LDAP, or check whether the office's accounts server is healthy, even if they never say "MCP" and only ask something like "Anna starts on Monday, give her an account" or "Ben left, lock him out". Also use it to connect an assistant to keelAuth for the first time (keel-mcp, token, certificate fingerprint).
 ---
 
 # keelAuth
@@ -71,6 +71,12 @@ keelAuth <domain>: <one-line verdict>
 
 **A new employee.** `user_add` with `name`, `display_name`, `mail` and the `groups` they need (look
 at `group_list` first and ask if it is unclear which). Return the generated password once.
+
+**Give somebody a service** (mail, the shares, working from home, Wi-Fi, an application). A service
+belongs to a group and whoever is in the group has it: `service_list` shows each service with its
+group, then `group_members` puts the person in. A service whose group is `""` is open to every
+account already. To restrict a service to a group, `service_group` (it changes who gets in: confirm
+first; the group is made when it is not there, and starts empty).
 
 **Somebody leaves.** `user_disable`, not deletion: logins stop everywhere at once, and the account
 can be looked at or enabled again later. Disabling takes effect on LDAP, SSO and Wi-Fi immediately;

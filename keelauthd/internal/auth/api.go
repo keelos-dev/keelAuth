@@ -208,6 +208,20 @@ func (s *Server) buildHandler() http.Handler {
 	// no login needed
 	m.HandleFunc("GET /login/state", s.wrap(s.getLoginState))
 	m.HandleFunc("POST /login", s.wrap(s.ready(s.postLogin)))
+	// the phone module (phonemod.go): the login page's challenge and poll, the phone's own calls
+	m.HandleFunc("POST /login/phone", s.wrap(s.ready(s.postPhoneLogin)))
+	m.HandleFunc("GET /login/phone/{id}", s.wrap(s.ready(s.getPhoneLogin)))
+	m.HandleFunc("POST /phone/enroll", s.wrap(s.ready(s.postPhoneEnroll)))
+	m.HandleFunc("POST /phone/approve", s.wrap(s.ready(s.postPhoneApprove)))
+	m.HandleFunc("GET /v1/phones", s.need(s.loggedIn, s.wrap(s.ready(s.getPhones))))
+	m.HandleFunc("POST /v1/phones/enroll", s.need(s.loggedIn, s.wrap(s.ready(s.postPhoneEnrolment))))
+	m.HandleFunc("GET /v1/phones/enroll/{id}", s.need(s.loggedIn, s.wrap(s.ready(s.getPhoneEnrolment))))
+	m.HandleFunc("DELETE /v1/phones/{id}", s.need(s.loggedIn, s.wrap(s.ready(s.deletePhone))))
+	// the totp module (totpmod.go): the own code, an administrator removes anybody's
+	m.HandleFunc("GET /v1/totp", s.need(s.loggedIn, s.wrap(s.ready(s.getTOTP))))
+	m.HandleFunc("POST /v1/totp/enroll", s.need(s.loggedIn, s.wrap(s.ready(s.postTOTPEnroll))))
+	m.HandleFunc("POST /v1/totp/confirm", s.need(s.loggedIn, s.wrap(s.ready(s.postTOTPConfirm))))
+	m.HandleFunc("DELETE /v1/totp", s.need(s.loggedIn, s.wrap(s.ready(s.deleteTOTP))))
 	m.HandleFunc("POST /logout", s.postLogout)
 	m.HandleFunc("GET /session", s.wrap(s.getSession))
 	// the company's name and logo: the login page shows them (brand.go)
@@ -250,6 +264,9 @@ func (s *Server) buildHandler() http.Handler {
 	a("GET /v1/ldap", s.getLDAP)
 	a("POST /v1/ldap/bind", s.postLDAPBind)
 	a("GET /v1/consumers", s.getConsumers)
+	a("PUT /v1/consumers/{id}", s.putConsumer)
+	a("GET /v1/modules", s.getModules)
+	a("PUT /v1/modules/{name}", s.putModule)
 	a("GET /v1/ldap/devices", s.getDevices)
 	a("POST /v1/ldap/devices", s.postDevice)
 	a("POST /v1/ldap/devices/{name}/password", s.postDevicePassword)
@@ -295,6 +312,7 @@ func (s *Server) buildHandler() http.Handler {
 	a("DELETE /v1/sync/keys/{id}", s.deleteSyncKey)
 	m.HandleFunc("GET /v1/sync/accounts", s.need(s.syncer, s.wrap(s.ready(s.getSyncAccounts))))
 	m.HandleFunc("PUT /v1/sync/offers", s.need(s.syncer, s.wrap(s.ready(s.putSyncOffers))))
+	m.HandleFunc("POST /v1/sync/verify", s.need(s.syncer, s.wrap(s.ready(s.postSyncVerify))))
 	m.Handle("POST /mcp", s.need(s.mcpCaller, s.mcpHandler()))
 	m.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, notFound("no such API: %s %s", r.Method, r.URL.Path))
@@ -373,7 +391,7 @@ func (s *Server) admin(c *Caller) error {
 		if c.Kind == "" {
 			return coded(http.StatusUnauthorized, "login", "log in first")
 		}
-		return coded(http.StatusForbidden, "scope", "this token is only for %s", map[string]string{"token": "POST /mcp", "sync": "GET /v1/sync/accounts", kindAPI: "the routes of its scope"}[c.Kind])
+		return coded(http.StatusForbidden, "scope", "this token is only for %s", map[string]string{"token": "POST /mcp", "sync": "the sync interface (/v1/sync/accounts, offers, verify)", kindAPI: "the routes of its scope"}[c.Kind])
 	case !c.Admin:
 		return coded(http.StatusForbidden, "not_admin", "only members of %s may manage keelAuth", AdminGroup)
 	case c.Kind == "session" && s.mustChange(c.Name):

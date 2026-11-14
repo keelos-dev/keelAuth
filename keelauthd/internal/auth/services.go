@@ -440,6 +440,12 @@ func contains(xs []string, x string) bool {
 func (s *Server) ApplyRadius() error {
 	s.radMu.Lock()
 	defer s.radMu.Unlock()
+	if !s.moduleOn("radius") { // the module is off: radiusd stays down, its files untouched
+		if s.Real && s.running("radiusd") {
+			s.Sys.Run("", "service", "radiusd", "onestop")
+		}
+		return nil
+	}
 	if s.State().Radius.Local == "" {
 		if err := s.update(func(st *State) error { st.Radius.Local = s.box.Seal(secret.Random(12)); return nil }, false); err != nil {
 			return err

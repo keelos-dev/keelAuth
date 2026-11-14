@@ -90,7 +90,7 @@ func (d ldapDir) People() []ldap.Person {
 		if u.Mail != "" {
 			p.Mails = []string{u.Mail}
 		}
-		p.Mails = append(p.Mails, addressesOf(ac.st, u.Name)...)
+		p.Mails = append(p.Mails, ac.addresses(u.Name)...)
 		out = append(out, p)
 	}
 	return out
@@ -130,6 +130,10 @@ func (s *Server) serveLDAP(port int) {
 	tc := &tls.Config{GetCertificate: s.serverCert, MinVersion: tls.VersionTLS12}
 	addr := fmt.Sprintf(":%d", port)
 	for i := 0; ; i++ {
+		if !s.moduleOn("ldap") { // switched off (modules.go): wait for the switch
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			if i%12 == 0 {
@@ -139,9 +143,15 @@ func (s *Server) serveLDAP(port int) {
 			continue
 		}
 		s.Log.Printf("ldap: listening on %s (LDAPS)", addr)
+		s.setModuleCloser("ldap", ln)
 		ldapListening.Store(true)
 		err = srv.Serve(tls.NewListener(ln, tc))
 		ldapListening.Store(false)
+		s.setModuleCloser("ldap", nil)
+		if !s.moduleOn("ldap") {
+			s.Log.Printf("ldap: stopped (module off)")
+			continue
+		}
 		s.Log.Printf("ldap: %v", err)
 		time.Sleep(5 * time.Second)
 	}

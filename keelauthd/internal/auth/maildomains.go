@@ -30,21 +30,45 @@ func mailDomainsOf(st *State) []string {
 	return slices.Compact(out)
 }
 
-// addressesOf is the account's mailboxes: <name>@<domain> for each ticked domain still
-// offered.
-func addressesOf(st *State, name string) []string {
-	d := st.Users[name]
-	if d == nil || len(d.MailDomains) == 0 {
-		return []string{}
-	}
-	offered := mailDomainsOf(st)
+// tickedMailDomains: the domains of the mail servers that have no group (access.go): a
+// mailbox there is a tick in the account's dialog, as before services had groups.
+func tickedMailDomains(st *State) []string {
 	out := []string{}
-	for _, dom := range d.MailDomains {
-		if slices.Contains(offered, dom) {
-			out = append(out, name+"@"+dom)
+	for _, k := range st.SyncKeys {
+		if st.ServiceGroups[accessSync+k.ID] == "" {
+			out = append(out, k.MailDomains...)
 		}
 	}
-	return out
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
+// addresses is the account's mailboxes. A mail server with a group: its members have
+// <name>@<domain> at every domain it offers ("whoever is in the mail group has a mail
+// address"). A mail server without one: at each domain ticked for the account.
+func (a accessChecker) addresses(name string) []string {
+	out := []string{}
+	var ticked []string
+	if d := a.st.Users[name]; d != nil {
+		ticked = d.MailDomains
+	}
+	for _, k := range a.st.SyncKeys {
+		group := a.st.ServiceGroups[accessSync+k.ID]
+		for _, dom := range k.MailDomains {
+			if (group != "" && slices.Contains(a.memberOf[name], group)) || (group == "" && slices.Contains(ticked, dom)) {
+				out = append(out, name+"@"+dom)
+			}
+		}
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
+// cleanList: sorted, each once.
+func cleanList(l []string) []string {
+	out := slices.Clone(l)
+	sort.Strings(out)
+	return slices.Compact(out)
 }
 
 // checkMailDomains: every domain is one keelMail offers.

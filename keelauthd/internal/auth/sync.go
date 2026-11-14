@@ -22,6 +22,9 @@ type SyncUser struct {
 	// PasswordHash: the password as a PHC string ($pbkdf2-sha256$…), for a mail server's own
 	// directory; "" with Kanidm (its hashes stay inside it) or without a password
 	PasswordHash string `json:"password_hash,omitempty"`
+	// TOTP: the account has an authenticator app set up (and the module is on): what POST
+	// /v1/sync/verify will ask a code for.
+	TOTP bool `json:"totp"`
 }
 
 type SyncGroup struct {
@@ -48,12 +51,15 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 	users := []SyncUser{}
 	ac := s.accessChecker()
 	consumer := consumerOfSync(caller(r))
+	// a key made without secrets is told who the accounts are, never their hashes
+	key := s.syncKeyOf(caller(r))
+	secrets := key == nil || !key.NoSecrets
 	for _, u := range us {
 		if u.Name == BindAccount || (consumer != "" && !ac.allowed(u.Name, consumer)) {
 			continue
 		}
-		su := SyncUser{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, Enabled: u.Enabled, Groups: u.Groups, Mail: u.Mail, Addresses: addressesOf(st, u.Name)}
-		if n := s.native(); n != nil {
+		su := SyncUser{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, Enabled: u.Enabled, Groups: u.Groups, Mail: u.Mail, Addresses: ac.addresses(u.Name), TOTP: s.totpNeeded(u.Name)}
+		if n := s.native(); n != nil && secrets {
 			su.PasswordHash = n.PasswordHash(u.Name)
 		}
 		if su.Groups == nil {
@@ -65,6 +71,9 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 				return nil, err
 			}
 			su.NTHash, su.SetAt, su.MustChange = nt, d.SetAt, d.MustChange
+			if !secrets {
+				su.NTHash = ""
+			}
 		}
 		users = append(users, su)
 	}
@@ -73,5 +82,5 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 		g := groupOut(&gs[i])
 		groups = append(groups, SyncGroup{Name: g.Name, GID: g.GID, Members: g.Members})
 	}
-	return map[string]any{"revision": st.Revision, "domain": st.Domain, "users": users, "groups": groups, "mail_domains": mailDomainsOf(st)}, nil
+	return map[string]any{"revision": st.Revision, "domain": st.Domain, "users": users, "groups": groups, "mail_domains": mailDomainsOf(st), "secrets": secrets}, nil
 }

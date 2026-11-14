@@ -43,6 +43,13 @@ elif [ -z "${KA_PORT_KANIDMD:-}" ]; then
     exit 1
 fi
 if [ -x "$REPO/keelauthd/keelauthd" ]; then
+    # the binary must be this HEAD's (keelauthd/build.sh puts the git version in it): an old one
+    # went into an image once (2026-10-30, docs/03); KA_STALE=1 takes it anyway
+    HEADV=$(git -C "$REPO" rev-parse --short HEAD)
+    if ! grep -q "$HEADV" "$REPO/keelauthd/keelauthd" && [ -z "${KA_STALE:-}" ]; then
+        echo "vmbuild.sh: keelauthd/keelauthd is not built from HEAD ($HEADV): run keelauthd/build.sh first (KA_STALE=1 takes it anyway)" >&2
+        exit 1
+    fi
     cp "$REPO/keelauthd/keelauthd" "$W/img/files/keelauthd"
     echo "keelauthd: $REPO/keelauthd/keelauthd"
 else
@@ -59,6 +66,12 @@ mkdir -p "$OUT"
 $SSH "sh /root/img/build.sh vtbd1 $VER $KEYARG" > "$OUT/build-$VER.log" 2>&1 || {
     tail -20 "$OUT/build-$VER.log"; echo "build failed: $OUT/build-$VER.log"; exit 1; }
 grep '^== \|^files:' "$OUT/build-$VER.log" | tail -6
+# out.raw replaced under a running builder (rm + truncate) leaves the result in the deleted
+# inode and an empty new file (2026-10-30, docs/03): say so. KA_OUT: the output disk (default out.raw
+# in the current directory, the builder's directory)
+if [ "$(stat -c %b "${KA_OUT:-out.raw}" 2>/dev/null)" = 0 ]; then
+    echo "vmbuild.sh: out.raw has no blocks: the builder VM holds a deleted out.raw; restart it (rm out.raw; truncate -s 6G out.raw; ./builder-start.sh) and build again" >&2; exit 1
+fi
 echo "$VER" > "$OUT/version"
 # the image's package list for the source bundle (keelOS tools/licenses/sources.sh, docs/45 C)
 sed -n '/^PACKAGES-BEGIN$/,/^PACKAGES-END$/p' "$OUT/build-$VER.log" | sed '1d;$d' | tr -d '\r' > "$OUT/keelauth-$VER.packages.txt"

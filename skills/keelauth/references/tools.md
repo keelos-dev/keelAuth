@@ -11,6 +11,7 @@ named by their short lower-case name. Errors come back as text that starts with 
 - user_disable, user_enable
 - user_reset_password
 - group_list, group_add, group_members
+- service_list, service_group
 - oidc_list, oidc_create
 - radius_list, radius_client_add
 - ldap_info
@@ -118,6 +119,28 @@ cycles): groups come back in `member_groups`, users in `members`. Both answer wi
 ```json
 {"name": "sales", "description": "", "members": ["bob"], "gid": 2061111789, "builtin": false}
 ```
+
+
+## service_list, service_group
+
+A service belongs to a group; whoever is in the group has the service.
+
+`service_list`: no arguments.
+
+```json
+{"consumers": [
+  {"id": "smb", "kind": "smb", "name": "keelNAS", "group": "samba", "suggest": "samba", "users": 12},
+  {"id": "wifi", "kind": "wifi", "name": "Wi-Fi", "group": "", "suggest": "wifi", "users": 14},
+  {"id": "sync:1f2e3d4c", "kind": "sync", "name": "keelMail", "group": "mail", "suggest": "mail", "users": 13, "mail_domains": ["example.com"]}],
+ "mail_domains": ["example.com"], "mail_domains_ticked": []}
+```
+
+`group` `""`: every account has the service. `missing: true`: the group named no longer exists, so
+nobody has the service. `suggest` is the group's usual name.
+
+`service_group`: `service` (an `id` above, required), `group` (required; `""` opens the service to
+every account). A group that does not exist is made, empty: nobody has the service until somebody
+is put in with `group_members`. Answers with the service as in the list.
 
 ## oidc_list, oidc_create
 

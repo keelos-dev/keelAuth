@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"keelauth/internal/module/phone"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -43,19 +45,17 @@ type UserData struct {
 	NT         string `json:"nt,omitempty"` // sealed NT hash
 	SetAt      string `json:"password_set_at,omitempty"`
 	MustChange bool   `json:"must_change,omitempty"`
-	// Access: the services the account may use (access.go); AccessSet false = everything.
-	Access    []string `json:"access,omitempty"`
-	AccessSet bool     `json:"access_set,omitempty"`
 	// MailDomains: the mail domains ticked for the account (maildomains.go): a mailbox
-	// <name>@<domain> at each.
+	// <name>@<domain> at each, where the mail server has no group of its own (access.go).
 	MailDomains []string `json:"mail_domains,omitempty"`
+	// TOTP: the sealed secret of the user's second-factor code (totpmod.go); "" = none.
+	TOTP      string `json:"totp,omitempty"`
+	TOTPSetAt string `json:"totp_set_at,omitempty"`
 }
 
-// GroupData is what keelauthd keeps of a group beside the engine: the services its members
-// may use (added to their own).
-type GroupData struct {
-	Access []string `json:"access,omitempty"`
-}
+// GroupData is what keelauthd keeps of a group beside the engine: nothing now (what a group
+// gives its members is State.ServiceGroups, access.go).
+type GroupData struct{}
 
 // RadiusClient is an AP or VPN gateway allowed to ask FreeRADIUS.
 type RadiusClient struct {
@@ -82,6 +82,12 @@ type Token struct {
 	Scope    string `json:"scope,omitempty"`
 	// MailDomains: what a sync key's mail server offers (maildomains.go).
 	MailDomains []string `json:"mail_domains,omitempty"`
+	// NoSecrets: a sync key that is told who the accounts are and never their password
+	// hashes (a gateway on the edge of the network, sync.go).
+	NoSecrets bool `json:"no_secrets,omitempty"`
+	// RequireTOTP: a sync key whose POST /v1/sync/verify passes only accounts with an
+	// authenticator app set up (verify.go).
+	RequireTOTP bool `json:"require_totp,omitempty"`
 }
 
 // State is keelauthd's own data. Accounts themselves are in the engine.
@@ -96,19 +102,27 @@ type State struct {
 	Domain      string `json:"domain"`       // Kanidm's domain, fixed at the first start
 	// Engine: which account engine holds the accounts, fixed at the first start (engine.go):
 	// EngineKanidm (Kanidm in the VM) or EngineNative (keelauthd's own store, accounts.json).
-	Engine     string                `json:"engine,omitempty"`
-	LDAPPort   int                   `json:"ldap_port"`
-	Admin      string                `json:"idm_admin,omitempty"` // sealed idm_admin password
-	Users      map[string]*UserData  `json:"users"`
-	Groups     map[string]*GroupData `json:"groups,omitempty"`
-	Radius     Radius                `json:"radius"`
-	BindPW     string                `json:"ldap_bind,omitempty"` // sealed password of BindAccount
-	Tokens     []Token               `json:"tokens"`
-	SyncKeys   []Token               `json:"sync_keys"`
-	APIKeys    []Token               `json:"api_keys"`
-	Revision   int64                 `json:"revision"`
-	BackupKeep int                   `json:"backup_keep"`
-	LastBackup string                `json:"last_backup,omitempty"`
+	Engine string `json:"engine,omitempty"`
+	// Modules: the optional parts switched on or off by the admin (modules.go); absent = the
+	// module's default.
+	Modules map[string]bool `json:"modules,omitempty"`
+	// Phones: the phones enrolled for logging in (phonemod.go, module phone).
+	Phones   []phone.Device        `json:"phones,omitempty"`
+	LDAPPort int                   `json:"ldap_port"`
+	Admin    string                `json:"idm_admin,omitempty"` // sealed idm_admin password
+	Users    map[string]*UserData  `json:"users"`
+	Groups   map[string]*GroupData `json:"groups,omitempty"`
+	Radius   Radius                `json:"radius"`
+	BindPW   string                `json:"ldap_bind,omitempty"` // sealed password of BindAccount
+	Tokens   []Token               `json:"tokens"`
+	SyncKeys []Token               `json:"sync_keys"`
+	// ServiceGroups: the group whose members may use a service (consumer id → group name);
+	// a service not in it is open to every account (access.go).
+	ServiceGroups map[string]string `json:"service_groups,omitempty"`
+	APIKeys       []Token           `json:"api_keys"`
+	Revision      int64             `json:"revision"`
+	BackupKeep    int               `json:"backup_keep"`
+	LastBackup    string            `json:"last_backup,omitempty"`
 	// Timezone: what the page shows times in when keelAuth runs standalone (keel's own zone
 	// otherwise, keelOS docs/47); "" = UTC.
 	Timezone string `json:"timezone,omitempty"`
@@ -182,16 +196,17 @@ func (s *State) Clone() *State {
 	c.Users = map[string]*UserData{}
 	for k, v := range s.Users {
 		u := *v
-		u.Access = slices.Clone(v.Access)
 		u.MailDomains = slices.Clone(v.MailDomains)
 		c.Users[k] = &u
 	}
 	c.Groups = map[string]*GroupData{}
 	for k, v := range s.Groups {
 		g := *v
-		g.Access = slices.Clone(v.Access)
 		c.Groups[k] = &g
 	}
+	c.ServiceGroups = maps.Clone(s.ServiceGroups)
+	c.Modules = maps.Clone(s.Modules)
+	c.Phones = slices.Clone(s.Phones)
 	c.Radius.Clients = slices.Clone(s.Radius.Clients)
 	c.Tokens = slices.Clone(s.Tokens)
 	c.SyncKeys = slices.Clone(s.SyncKeys)

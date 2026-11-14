@@ -212,6 +212,29 @@ var tools = []Tool{
 			var out any
 			return out, api.Do("POST", "/v1/groups/"+url.PathEscape(g)+"/members", map[string]any{"add": add, "remove": rm}, &out)
 		}},
+	{Name: "service_list", Title: "List services and their groups",
+		Description: "Every service accounts can be allowed into (the shares, LDAP, Wi-Fi, each SSO application, each sync key: a mail server, a gateway) with the group it belongs to: whoever is in that group has the service; group \"\" means every account has it. users is how many accounts have it now; suggest is the group's usual name. To give somebody a service, put them in its group (group_members).",
+		InputSchema: obj(map[string]any{}), Annotations: readOnly,
+		Run: func(api Doer, a map[string]any) (any, error) {
+			var out any
+			return out, api.Do("GET", "/v1/consumers", nil, &out)
+		}},
+	{Name: "service_group", Title: "Choose a service's group",
+		Description: "Say which group a service belongs to (service: an id from service_list, such as smb, ldap, wifi, oidc:<name>, sync:<key id>). From then on only the members of that group have the service; a group that does not exist is made, empty. group \"\" opens the service to every account again. This changes who can get in: confirm with the user first.",
+		InputSchema: obj(map[string]any{"service": map[string]any{"type": "string"}, "group": map[string]any{"type": "string", "description": "the group's name, \"\" for every account"}}, "service", "group"),
+		Annotations: sensitive,
+		Run: func(api Doer, a map[string]any) (any, error) {
+			svc, err := str(a, "service", true)
+			if err != nil {
+				return nil, err
+			}
+			g, err := str(a, "group", false)
+			if err != nil {
+				return nil, err
+			}
+			var out any
+			return out, api.Do("PUT", "/v1/consumers/"+url.PathEscape(svc), map[string]any{"group": g}, &out)
+		}},
 	{Name: "oidc_list", Title: "List SSO applications",
 		Description: "The web applications that log in with keelAuth (OIDC): client id, redirect URLs, who may log in (scope_group, empty = all users), the discovery URL to give the application.",
 		InputSchema: obj(map[string]any{}), Annotations: readOnly, Run: get("/v1/oidc")},

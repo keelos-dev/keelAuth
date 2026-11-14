@@ -100,15 +100,22 @@ func (s *Server) getStatus(r *http.Request) (any, error) {
 	// REST answering keelauthd); service_errors says why one is not
 	svc := s.CheckServices()
 	kind := s.engineKind()
-	services := map[string]bool{"radiusd": svc["radiusd"] == nil}
+	services := map[string]bool{}
+	if s.moduleOn("radius") {
+		services["radiusd"] = svc["radiusd"] == nil
+	}
 	engineName := "store" // the native store: up = keelauthd's bring-up went through
 	if kind != EngineNative {
 		engineName = "kanidmd"
 	}
 	services[engineName] = svc[engineName] == nil && s.engineReady()
-	if kind == EngineNative { // the modules' listeners
-		services["ldap"] = ldapListening.Load() || !s.Real
-		services["oidc"] = oidcListening.Load() || !s.Real
+	if kind == EngineNative { // the modules' listeners (modules.go)
+		if s.moduleOn("ldap") {
+			services["ldap"] = ldapListening.Load() || !s.Real
+		}
+		if s.moduleOn("oidc") {
+			services["oidc"] = oidcListening.Load() || !s.Real
+		}
 	}
 	serrs := map[string]string{}
 	for n, e := range svc {
@@ -128,6 +135,9 @@ func (s *Server) getStatus(r *http.Request) (any, error) {
 		"service_errors": serrs,
 		"counts":         counts, "last_backup": st.LastBackup, "alerts": len(s.Alerts()), "fingerprint": s.Fingerprint(),
 		"ldap_port": st.LDAPPort, "radius_port": RadiusPort, "kanidm_port": KanidmPort,
+		// ports: what the enabled modules listen on (keel: the LAN NIC's ACL, docs/80 §44);
+		// modules: the enabled ones
+		"ports": s.ModulePorts(), "modules": s.enabledModules(),
 	}
 	minLen, strength := st.PasswordPolicy()
 	out["password_policy"] = map[string]any{"min_length": minLen, "strength": strength}

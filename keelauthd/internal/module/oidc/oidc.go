@@ -34,6 +34,25 @@ type Directory interface {
 	Allowed(name, client string) bool
 }
 
+// SecondFactor is what a Directory offers when the totp module is there (keelauthd
+// totpmod.go): after the password the page asks for a code when the user has one.
+type SecondFactor interface {
+	// SecondFactor: the user needs a code; the token names the half-done login.
+	SecondFactor(name string) (token string, needed bool)
+	// CheckSecondFactor: the token's user, and whether the code was right.
+	CheckSecondFactor(token, code string) (name string, ok bool)
+}
+
+// PhoneLogin is what a Directory offers when the phone module is there (keelauthd
+// phonemod.go): the login page shows a QR code and polls until a phone approved it.
+type PhoneLogin interface {
+	PhoneOn() bool
+	// PhoneChallenge: a new challenge: its id, the page's poll key, the QR code (an <img> URL).
+	PhoneChallenge() (id, poll, qr string, ok bool)
+	// PhonePoll: "pending", "expired" or "approved" with the user (once).
+	PhonePoll(id, poll string) (state, user string)
+}
+
 // Person is a user as the provider sees them.
 type Person struct {
 	Name        string
@@ -145,6 +164,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.introspect(w, r)
 	case p == "/ui/login":
 		s.login(w, r)
+	case p == "/ui/login/phone":
+		s.phoneLogin(w, r)
+	case p == "/ui/login/phone.js":
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Write([]byte(phoneJS))
 	case p == "/ui/logout":
 		s.logout(w, r)
 	case p == "/ui/apps" || p == "/ui" || p == "/ui/" || p == "/":
@@ -330,6 +354,32 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	pw := r.FormValue("password")
 	ip := clientIP(r)
+	if tok := r.FormValue("token"); tok != "" { // the second step: the code
+		sf, ok := s.Dir.(SecondFactor)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		user, good := sf.CheckSecondFactor(tok, r.FormValue("code"))
+		if user == "" {
+			s.page(w, r, loginPage{ret: ret, err: "the login timed out: start again"})
+			return
+		}
+		if wait := s.lim.Blocked(ip, user); wait > 0 {
+			s.page(w, r, loginPage{ret: ret, name: user, err: "too many failed logins: try again in " + wait.Round(time.Second).String()})
+			return
+		}
+		if !good {
+			s.lim.Failed(ip, user)
+			s.logf("login %s from %s: wrong code", user, ip)
+			s.page(w, r, loginPage{ret: ret, name: user, token: tok, err: "the code is wrong"})
+			return
+		}
+		s.lim.OK(ip, user)
+		s.newSession(w, user)
+		http.Redirect(w, r, ret, http.StatusSeeOther)
+		return
+	}
 	if wait := s.lim.Blocked(ip, name); wait > 0 {
 		s.page(w, r, loginPage{ret: ret, name: name, err: "too many failed logins: try again in " + wait.Round(time.Second).String()})
 		return
@@ -341,6 +391,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.lim.OK(ip, name)
+	if sf, ok := s.Dir.(SecondFactor); ok {
+		if tok, needed := sf.SecondFactor(name); needed {
+			s.page(w, r, loginPage{ret: ret, name: name, token: tok})
+			return
+		}
+	}
 	s.newSession(w, name)
 	http.Redirect(w, r, ret, http.StatusSeeOther)
 }
@@ -701,7 +757,8 @@ func (s *Server) introspect(w http.ResponseWriter, r *http.Request) {
 
 // ---- pages ----
 
-type loginPage struct{ ret, name, err string }
+// loginPage: token set = the second step (the code) for name.
+type loginPage struct{ ret, name, err, token string }
 
 func (s *Server) apps(w http.ResponseWriter, r *http.Request) {
 	user, _ := s.sessionUser(r)
@@ -745,13 +802,67 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request, lp loginPage) {
 	if brand == "" {
 		brand = "keelAuth"
 	}
+	if lp.token != "" {
+		body := `<h1>Sign in to ` + html.EscapeString(brand) + `</h1><p>` + html.EscapeString(lp.name) + `: the code from your authenticator app</p>` + errHTML +
+			`<form method="post" action="/ui/login"><input type="hidden" name="return" value="` + html.EscapeString(lp.ret) + `">` +
+			`<input type="hidden" name="token" value="` + html.EscapeString(lp.token) + `">` +
+			`<input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" required autofocus>` +
+			`<button type="submit">Sign in</button></form>`
+		s.render(w, "Sign in", body)
+		return
+	}
 	body := `<h1>Sign in to ` + html.EscapeString(brand) + `</h1>` + errHTML +
 		`<form method="post" action="/ui/login"><input type="hidden" name="return" value="` + html.EscapeString(lp.ret) + `">` +
 		`<input type="text" name="username" autocomplete="username" placeholder="User name" value="` + html.EscapeString(lp.name) + `" required autofocus spellcheck="false" autocapitalize="off">` +
 		`<input type="password" name="password" autocomplete="current-password" placeholder="Password" required>` +
 		`<button type="submit">Sign in</button></form>`
+	if pl, ok := s.Dir.(PhoneLogin); ok && pl.PhoneOn() {
+		body += `<div id="phone" class="phone" data-return="` + html.EscapeString(lp.ret) + `" data-scan="or scan with keelApp on your phone" data-ok="Signed in, one moment…" data-expired="The code expired: reload the page for a new one">` +
+			`<img id="phone-qr" alt="" style="display:none"><p id="phone-msg" class="muted"></p></div><script src="/ui/login/phone.js"></script>`
+	}
 	s.render(w, "Sign in", body)
 }
+
+// phoneLogin: POST = a new challenge for the page; GET ?c=&p= = its poll, approved = the
+// session is opened on the answer and the page goes on to its return path.
+func (s *Server) phoneLogin(w http.ResponseWriter, r *http.Request) {
+	pl, ok := s.Dir.(PhoneLogin)
+	if !ok || !pl.PhoneOn() {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		id, poll, qr, ok := pl.PhoneChallenge()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"id": id, "poll": poll, "qr": qr})
+	case http.MethodGet:
+		state, user := pl.PhonePoll(r.URL.Query().Get("c"), r.URL.Query().Get("p"))
+		if state == "approved" {
+			s.newSession(w, user)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"state": state})
+	default:
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
+}
+
+// phoneJS drives the QR code on the login page (same paths under keel's proxy).
+const phoneJS = `(function(){
+var box=document.getElementById("phone");if(!box)return;
+var img=document.getElementById("phone-qr"),msg=document.getElementById("phone-msg");
+var ret=box.getAttribute("data-return")||"/ui/apps",id,poll,timer,started=Date.now();
+function start(){fetch("/ui/login/phone",{method:"POST",credentials:"same-origin"}).then(function(r){return r.json()}).then(function(c){
+if(!c.id){box.style.display="none";return}id=c.id;poll=c.poll;img.src=c.qr;img.style.display="";msg.textContent=box.getAttribute("data-scan");
+timer=setInterval(check,2000)}).catch(function(){box.style.display="none"})}
+function check(){fetch("/ui/login/phone?c="+encodeURIComponent(id)+"&p="+encodeURIComponent(poll),{credentials:"same-origin"}).then(function(r){return r.json()}).then(function(x){
+if(x.state==="approved"){clearInterval(timer);msg.textContent=box.getAttribute("data-ok");location.replace(ret)}
+else if(x.state==="expired"){clearInterval(timer);if(Date.now()-started<600000)start();else{img.style.display="none";msg.textContent=box.getAttribute("data-expired")}}}).catch(function(){})}
+start()})();
+`
 
 // render is the shell every page shares: one small style, the brand, no scripts (keel's
 // policy for the pages it passes through allows none of ours).
@@ -783,4 +894,5 @@ button{width:100%;margin-top:10px;padding:10px;border:0;background:#1a56db;color
 .app{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 8px;border:1px solid #d9dce1;color:inherit;text-decoration:none;text-align:center}
 .app:hover{border-color:#1a56db}.mark{width:44px;height:44px;display:grid;place-items:center;background:#1a56db;color:#fff;font-weight:700;font-size:20px}
 a{color:#1a56db}
+.phone{text-align:center;margin-top:18px}.phone img{width:184px;height:184px;background:#fff;padding:4px;border:1px solid #d7d9de}
 `

@@ -4,7 +4,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -71,16 +73,53 @@ func dedup(xs []string) []string {
 	return out
 }
 
-func (d ldapDir) People() []ldap.Person {
+// People: the accounts that have LDAP.
+func (d ldapDir) People() []ldap.Person { return d.people(AccessLDAP, "") }
+
+// PeopleSeenBy: what a bound connection finds. A device account that stands for a service
+// (Device.Service: a mail server's) finds the accounts that have that service. A person
+// who has LDAP, and keelAuth's shared bind account, find those who have LDAP. A person who
+// may bind only through a device's service (ldapServices) finds himself alone: his password
+// was checked, the directory is not his to read.
+func (d ldapDir) PeopleSeenBy(bound string) []ldap.Person {
+	if dev, ok := strings.CutPrefix(bound, "device:"); ok {
+		if x := d.s.State().device(dev); x != nil && x.Service != "" {
+			return d.people(x.Service, "")
+		}
+		return d.people(AccessLDAP, "")
+	}
+	if bound == BindAccount || d.s.allowed(bound, AccessLDAP) {
+		return d.people(AccessLDAP, "")
+	}
+	return d.people("", bound)
+}
+
+// ldapServices: LDAP itself and every service a device account stands for: an account with
+// one of them may bind with its password.
+func ldapServices(st *State) []string {
+	out := []string{AccessLDAP}
+	for _, x := range st.Devices {
+		if x.Service != "" && !slices.Contains(out, x.Service) {
+			out = append(out, x.Service)
+		}
+	}
+	return out
+}
+
+// people: the enabled accounts that have the service, or (only != "") that one account.
+func (d ldapDir) people(service, only string) []ldap.Person {
 	us, err := d.s.Eng.Users()
 	if err != nil {
 		return nil
 	}
 	_, _, memberOf := d.flat()
-	ac := accessChecker{st: d.s.State(), memberOf: memberOf}
+	ac := accessChecker{st: d.s.State(), memberOf: memberOf, open: d.s.openUnbound}
 	out := []ldap.Person{}
 	for _, u := range us {
-		if !u.Enabled || u.Name == BindAccount || !ac.allowed(u.Name, AccessLDAP) {
+		if !u.Enabled || u.Name == BindAccount {
+			continue
+		}
+		if only != "" && u.Name != only || only == "" && !ac.allowed(u.Name, service) {
 			continue
 		}
 		p := ldap.Person{Name: u.Name, DisplayName: u.DisplayName, UID: u.UID, UUID: u.UUID, Groups: memberOf[u.Name]}
@@ -115,8 +154,11 @@ func (d ldapDir) Reads(device string) []string {
 }
 
 func (d ldapDir) CheckPassword(name, pw string) bool {
-	if name != BindAccount && !d.s.allowed(name, AccessLDAP) {
-		return false
+	if name != BindAccount {
+		ac := d.s.accessChecker()
+		if !slices.ContainsFunc(ldapServices(ac.st), func(svc string) bool { return ac.allowed(name, svc) }) {
+			return false
+		}
 	}
 	ok, err := d.s.Eng.CheckPassword(name, pw)
 	return err == nil && ok

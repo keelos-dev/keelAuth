@@ -161,18 +161,25 @@ A service belongs to a group; whoever is in the group has the service.
 
 ```json
 {"consumers": [
-  {"id": "smb", "kind": "smb", "name": "keelNAS", "group": "samba", "suggest": "samba", "users": 12},
-  {"id": "wifi", "kind": "wifi", "name": "Wi-Fi", "group": "", "suggest": "wifi", "users": 14},
-  {"id": "sync:1f2e3d4c", "kind": "sync", "name": "keelMail", "group": "mail", "suggest": "mail", "users": 13, "mail_domains": ["example.com"]}],
+  {"id": "smb", "kind": "smb", "name": "keelNAS", "scope": "group", "group": "samba", "suggest": "samba", "users": 12},
+  {"id": "wifi", "kind": "wifi", "name": "Wi-Fi", "scope": "none", "group": "", "suggest": "wifi", "users": 0},
+  {"id": "sync:1f2e3d4c", "kind": "sync", "name": "keelMail", "scope": "all", "group": "", "suggest": "mail", "users": 14, "mail_domains": ["example.com"]}],
  "mail_domains": ["example.com"], "mail_domains_ticked": []}
 ```
 
-`group` `""`: every account has the service. `missing: true`: the group named no longer exists, so
-nobody has the service. `suggest` is the group's usual name.
+`scope`: `group` = the members of `group`; `none` = nobody (no group chosen yet: every new service
+starts so); `all` = every account, by the administrator's choice; `ticks` = a mail server without a
+group: the accounts with one of its domains ticked. `missing: true`: the group named no longer
+exists, so nobody has the service. `suggest` is the group's usual name.
 
-`service_group`: `service` (an `id` above, required), `group` (required; `""` opens the service to
-every account). A group that does not exist is made, empty: nobody has the service until somebody
-is put in with `group_members`. Answers with the service as in the list.
+`service_group`: `service` (an `id` above, required), then `group` (a name; `""` = nobody) or
+`all: true` (every account; not both). A group that does not exist is made, empty: nobody has the
+service until somebody is put in with `group_members`. Answers with the service as in the list.
+Until 2026-11-15 `group: ""` meant every account; now it closes the service.
+
+`ldap_device_add` takes an optional `service` (a `sync:<key id>` from the list): the device account
+then finds the people who have that service instead of those who have LDAP (a mail server that
+checks passwords over LDAP).
 
 ## oidc_list, oidc_create
 

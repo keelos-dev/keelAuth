@@ -41,7 +41,10 @@ type Server struct {
 	kek        []byte // keel's KEK (from the seed); nil standalone
 	unlocked   atomic.Bool
 	unlockedCh chan struct{}
-	unlockOnce sync.Once
+	// openUnbound: only the tests written before 2026-11-15 set it: a service without a
+	// group is open to every account, as it was then (access.go).
+	openUnbound bool
+	unlockOnce  sync.Once
 	// LocalKey: a standalone keelAuth's clear copy of the master key ("" = LocalKeyFile)
 	LocalKey string
 	// keelTZ: keel's time zone (seed, then keel's answer to the registration)
@@ -90,6 +93,7 @@ func NewServer(sy sys.Sys, eng engine.Engine, data, version string, lg *log.Logg
 		sessions: newSessions(), unlockedCh: make(chan struct{})}
 	s.sessions.save = s.saveSessions
 	if created {
+		st.ClosedDefault = true // nothing to keep open (access.go)
 		if err := SaveState(sy, data, st); err != nil {
 			return nil, err
 		}

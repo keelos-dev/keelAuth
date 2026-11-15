@@ -809,3 +809,8 @@ fieldset.feat table.feat-rows input { width: 100%; min-width: 6em; box-sizing: b
 fieldset.feat { margin-top: 8px; }
 fieldset.feat table.feat-rows button { white-space: nowrap; }
 .aud-bar select { height: 28px; box-sizing: border-box; font-size: 13px; }
+
+/* services: who each is for (docs/05 §1.10) */
+.badge.open { border-color: var(--warn); color: var(--warn); }
+select.svc-all { border-color: var(--warn); }
+ul.svc-list { margin: 0 0 4px; padding-left: 18px; }

@@ -272,15 +272,15 @@ var tools = []Tool{
 			return out, api.Do("POST", "/v1/groups/"+url.PathEscape(g)+"/members", map[string]any{"add": add, "remove": rm}, &out)
 		}},
 	{Name: "service_list", Title: "List services and their groups",
-		Description: "Every service accounts can be allowed into (the shares, LDAP, Wi-Fi, each SSO application, each sync key: a mail server, a gateway) with the group it belongs to: whoever is in that group has the service; group \"\" means every account has it. users is how many accounts have it now; suggest is the group's usual name. To give somebody a service, put them in its group (group_members).",
+		Description: "Every service accounts can be allowed into (the shares, LDAP, Wi-Fi, each SSO application, each sync key: a mail server, a gateway) with who it is for (scope): \"group\" = the members of group; \"none\" = nobody yet (a new service starts so: choose a group with service_group); \"all\" = every account, by the administrator's choice; \"ticks\" = a mail server without a group, the accounts with one of its domains ticked. users is how many accounts have it now; suggest is the group's usual name. To give somebody a service, put them in its group (group_members). user_list shows each account's services.",
 		InputSchema: obj(map[string]any{}), Annotations: readOnly,
 		Run: func(api Doer, a map[string]any) (any, error) {
 			var out any
 			return out, api.Do("GET", "/v1/consumers", nil, &out)
 		}},
 	{Name: "service_group", Title: "Choose a service's group",
-		Description: "Say which group a service belongs to (service: an id from service_list, such as smb, ldap, wifi, oidc:<name>, sync:<key id>). From then on only the members of that group have the service; a group that does not exist is made, empty. group \"\" opens the service to every account again. This changes who can get in: confirm with the user first.",
-		InputSchema: obj(map[string]any{"service": map[string]any{"type": "string"}, "group": map[string]any{"type": "string", "description": "the group's name, \"\" for every account"}}, "service", "group"),
+		Description: "Say which group a service belongs to (service: an id from service_list, such as smb, ldap, wifi, oidc:<name>, sync:<key id>). From then on only the members of that group have the service; a group that does not exist is made, empty. group \"\" closes the service: nobody has it (a mail server's: only accounts with a domain ticked). all true opens it to every account: do that only when the user says so in so many words (a mail server is the usual case: every account has a mailbox). This changes who can get in: confirm with the user first.",
+		InputSchema: obj(map[string]any{"service": map[string]any{"type": "string"}, "group": map[string]any{"type": "string", "description": "the group's name, \"\" for nobody"}, "all": map[string]any{"type": "boolean", "description": "true: every account (leave group out)"}}, "service"),
 		Annotations: sensitive,
 		Run: func(api Doer, a map[string]any) (any, error) {
 			svc, err := str(a, "service", true)
@@ -292,6 +292,12 @@ var tools = []Tool{
 				return nil, err
 			}
 			var out any
+			if all, _ := a["all"].(bool); all {
+				if g != "" {
+					return nil, fmt.Errorf("a group or all, not both")
+				}
+				return out, api.Do("PUT", "/v1/consumers/"+url.PathEscape(svc), map[string]any{"all": true}, &out)
+			}
 			return out, api.Do("PUT", "/v1/consumers/"+url.PathEscape(svc), map[string]any{"group": g}, &out)
 		}},
 	{Name: "oidc_list", Title: "List SSO applications",
@@ -339,11 +345,12 @@ var tools = []Tool{
 		Description: "Make a read-only LDAP account for one device or application (a printer's address book, a Linux machine, GitLab, Redmine, Dovecot). Returns bind_dn (dn=token) and the password (a long token) once: " +
 			"put it into the device. It reads users, groups and mail addresses, nothing else, and is revoked on its own (ldap_device_delete). Then ldap_examples gives the configuration.",
 		InputSchema: obj(map[string]any{"name": map[string]any{"type": "string", "description": "short name (lower-case), e.g. printer-2f"},
-			"description": map[string]any{"type": "string", "description": "what it is, e.g. \"Copier, 2nd floor\""}}, "name"),
+			"description": map[string]any{"type": "string", "description": "what it is, e.g. \"Copier, 2nd floor\""},
+			"service":     map[string]any{"type": "string", "description": "optional: a service id from service_list (a mail server's sync:<key id>): the account then finds the people who have that service instead of those who have LDAP, for a mail server that checks passwords over LDAP"}}, "name"),
 		Annotations: writes,
 		Run: func(api Doer, a map[string]any) (any, error) {
 			var out any
-			return out, api.Do("POST", "/v1/ldap/devices", pick(a, "name", "description"), &out)
+			return out, api.Do("POST", "/v1/ldap/devices", pick(a, "name", "description", "service"), &out)
 		}},
 	{Name: "ldap_device_password", Title: "New password for an LDAP device account",
 		Description: "Give a device account a new password (returned once); the old one stops working at once.",

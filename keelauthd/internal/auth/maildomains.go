@@ -45,7 +45,9 @@ func tickedMailDomains(st *State) []string {
 
 // addresses is the account's mailboxes. A mail server with a group: its members have
 // <name>@<domain> at every domain it offers ("whoever is in the mail group has a mail
-// address"). A mail server without one: at each domain ticked for the account.
+// address"). One open to every account: everybody has (docs/05 §1.10: "an account is a
+// mailbox"; a new account has its addresses at once). A mail server without either: at each
+// domain ticked for the account.
 func (a accessChecker) addresses(name string) []string {
 	out := []string{}
 	var ticked []string
@@ -55,7 +57,7 @@ func (a accessChecker) addresses(name string) []string {
 	for _, k := range a.st.SyncKeys {
 		group := a.st.ServiceGroups[accessSync+k.ID]
 		for _, dom := range k.MailDomains {
-			if (group != "" && slices.Contains(a.memberOf[name], group)) || (group == "" && slices.Contains(ticked, dom)) {
+			if group == everyAccount || (group != "" && slices.Contains(a.memberOf[name], group)) || (group == "" && slices.Contains(ticked, dom)) {
 				out = append(out, name+"@"+dom)
 			}
 		}

@@ -32,6 +32,9 @@ type DeviceOut struct {
 	Password    string `json:"password,omitempty"`
 	// Features: the feature modules whose LDAP attributes it reads (docs/02 §10.4).
 	Features []string `json:"features"`
+	// Service: the service whose people it finds ("" = LDAP's; "sync:<id>" = a mail
+	// server's, docs/02 §9.6).
+	Service string `json:"service"`
 	// Missing: keelAuth has it, the engine not (a restored older backup): make a new password
 	// or delete it
 	Missing bool `json:"missing,omitempty"`
@@ -39,7 +42,7 @@ type DeviceOut struct {
 
 func (d *Device) out() DeviceOut {
 	return DeviceOut{Name: d.Name, Description: d.Description, Created: d.Created, PasswordAt: d.PasswordAt, BindDN: DeviceBindDN,
-		Features: append([]string{}, d.Features...)}
+		Features: append([]string{}, d.Features...), Service: d.Service}
 }
 
 func (s *Server) devicesOut() []DeviceOut {
@@ -61,6 +64,24 @@ func (s *Server) devicesOut() []DeviceOut {
 	return out
 }
 
+// deviceService checks the service a device account is to stand for: "" or "ldap" = LDAP
+// itself (""), else a service there is. Only keelAuth's own LDAP server can do it.
+func (s *Server) deviceService(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" || id == AccessLDAP {
+		return "", nil
+	}
+	if s.legacyEngine() {
+		return "", coded(http.StatusConflict, "engine_kanidm", "a device account cannot stand for another service on Kanidm, the old engine (it serves LDAP itself)")
+	}
+	for _, c := range s.Consumers() {
+		if c.ID == id {
+			return id, nil
+		}
+	}
+	return "", bad("no service %q (GET /v1/consumers lists them)", id)
+}
+
 func (st *State) device(name string) *Device {
 	for i := range st.Devices {
 		if st.Devices[i].Name == name {
@@ -79,12 +100,17 @@ func (s *Server) postDevice(r *http.Request) (any, error) {
 		Name        string   `json:"name"`
 		Description string   `json:"description"`
 		Features    []string `json:"features"`
+		Service     string   `json:"service"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
 	}
 	req.Name, req.Description = strings.TrimSpace(req.Name), strings.TrimSpace(req.Description)
 	feats, err := checkKeyFeatures(req.Features)
+	if err != nil {
+		return nil, err
+	}
+	service, err := s.deviceService(req.Service)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +138,7 @@ func (s *Server) postDevice(r *http.Request) (any, error) {
 		return nil, err
 	}
 	now := s.now().Format(time.RFC3339)
-	d := Device{Name: req.Name, Description: req.Description, Created: now, PasswordAt: now, Features: feats}
+	d := Device{Name: req.Name, Description: req.Description, Created: now, PasswordAt: now, Features: feats, Service: service}
 	if err := s.update(func(st *State) error { st.Devices = append(st.Devices, d); return nil }, false); err != nil {
 		s.Eng.DeleteServiceAccount(req.Name)
 		return nil, err
@@ -123,15 +149,23 @@ func (s *Server) postDevice(r *http.Request) (any, error) {
 	return out, nil
 }
 
-// patchDevice: PATCH /v1/ldap/devices/{name} {"description", "features"}: what is given changes.
+// patchDevice: PATCH /v1/ldap/devices/{name} {"description", "features", "service"}: what is given changes.
 func (s *Server) patchDevice(r *http.Request) (any, error) {
 	name := r.PathValue("name")
 	var req struct {
 		Description *string   `json:"description"`
 		Features    *[]string `json:"features"`
+		Service     *string   `json:"service"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
+	}
+	service := ""
+	if req.Service != nil {
+		var err error
+		if service, err = s.deviceService(*req.Service); err != nil {
+			return nil, err
+		}
 	}
 	var feats []string
 	if req.Features != nil {
@@ -157,6 +191,9 @@ func (s *Server) patchDevice(r *http.Request) (any, error) {
 		}
 		if req.Features != nil {
 			x.Features = feats
+		}
+		if req.Service != nil {
+			x.Service = service
 		}
 		out = x.out()
 		return nil

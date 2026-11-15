@@ -34,6 +34,16 @@ export function Shown({ title, rows, note, onClose }) {
 
 // svcLabel: what a service (GET v1/consumers) is called.
 export const svcLabel = (c) => c.kind === "smb" ? t("users.acc.smb") : c.kind === "ldap" ? t("users.acc.ldap") : c.kind === "wifi" ? t("users.acc.wifi") : c.kind === "oidc" ? t("users.acc.oidc", c.name) : c.name;
+// Services: what the account has now and through what (GET v1/users "services"): its group,
+// "every account", or a ticked mail domain. An account with a mailbox only shows just that.
+const viaText = (v) => (v === "*" ? t("users.svc.all") : v === "tick" ? t("users.svc.tick") : t("users.svc.group", v));
+function UserServices({ user }) {
+  const sv = user.services || [];
+  return html`<fieldset class="hn-g"><legend>${t("users.services")}</legend>
+    ${sv.length === 0 ? html`<span class="muted small">${t("users.svc.none")}</span>` : html`<ul class="svc-list">${sv.map((x) => html`<li><b>${svcLabel(x)}</b> <span class="muted small">${viaText(x.via)}</span></li>`)}</ul>`}
+    <span class="muted small">${t("users.svc.hint")}</span></fieldset>`;
+}
+
 // gives: the services a group gives its members (a service belongs to a group; whoever is in
 // the group has it).
 export const gives = (consumers, group) => (consumers || []).filter((c) => c.group === group).map(svcLabel);
@@ -95,6 +105,7 @@ function EditUser({ user, groups, consumers, domains, features, onClose, onDone 
     <label>${t("users.mail")}<input type="text" inputmode="email" value=${f.mail} onInput=${set("mail")} /></label>
     <${MailPicks} domains=${domains} name=${user.name} value=${f.mail_domains} onChange=${(up) => setF((f) => ({ ...f, mail_domains: up(f.mail_domains) }))} />
     <${GroupPicks} groups=${groups} consumers=${consumers} value=${f.groups} onChange=${(up) => setF((f) => ({ ...f, groups: up(f.groups) }))} />
+    <${UserServices} user=${user} />
     <label class="check"><input type="checkbox" checked=${f.must_change} onChange=${set("must_change")} /> ${t("users.mustchange")}</label>
     <${FeatureFields} features=${features} value=${f.features} onChange=${(up) => setF((f) => ({ ...f, features: up(f.features) }))} />
     <${Phones} user=${user.name} />
@@ -178,9 +189,9 @@ export function Users() {
     ${us.length === 0 && html`<p class="muted">${t("users.none")}</p>`}
     ${us.length > 0 && shown.length === 0 && html`<p class="muted">${t("users.nomatch")}</p>`}
     ${shown.length > 0 && html`<div class="table-wrap tall"><table class="data plain">
-      <thead><tr><th>${t("users.name")}</th><th>${t("users.display")}</th>${cols.map((c) => html`<th>${featText(c.fd.title)}</th>`)}<th>${t("users.mail")}</th><th>${t("users.groups")}</th><th>${t("users.setat")}</th>${totpOn && html`<th>${t("users.totp")}</th>`}<th></th></tr></thead>
+      <thead><tr><th>${t("users.name")}</th><th>${t("users.display")}</th>${cols.map((c) => html`<th>${featText(c.fd.title)}</th>`)}<th>${t("users.mail")}</th><th>${t("users.groups")}</th><th>${t("users.services")}</th><th>${t("users.setat")}</th>${totpOn && html`<th>${t("users.totp")}</th>`}<th></th></tr></thead>
       <tbody>${shown.map((u) => html`<tr class=${u.enabled ? "" : "stale"}><td class="nowrap"><b>${u.name}</b> <${Flags} u=${u} /></td><td>${u.display_name}</td>${cols.map((c) => html`<td class="nowrap">${featCell(u, c.f, c.fd) || "–"}</td>`)}<td>${[u.mail, ...(u.addresses || [])].filter(Boolean).join(", ")}</td>
-        <td>${u.groups.join(", ") || "–"}</td><td>${u.password_set_at ? fmtTime(u.password_set_at) : "–"}</td>
+        <td>${u.groups.join(", ") || "–"}</td><td>${(u.services || []).map((x) => html`<span class="badge" title=${svcLabel(x) + " · " + viaText(x.via)}>${x.name}</span> `)}${(u.services || []).length === 0 ? "–" : ""}</td><td>${u.password_set_at ? fmtTime(u.password_set_at) : "–"}</td>
         ${totpOn && html`<td>${u.totp ? fmtTime(u.totp_set_at) : html`<span class="warn">${t("users.nototp")}</span>`}</td>`}
         <td class="nowrap"><button class="btn" onClick=${() => setDlg({ kind: "edit", user: u })}>${t("edit")}</button>
           <button class="btn" onClick=${() => setDlg({ kind: "reset", user: u })}>${t("users.reset")}</button>

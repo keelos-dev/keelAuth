@@ -137,6 +137,7 @@ func (s *Server) getStatus(r *http.Request) (any, error) {
 		"version": s.versionString(), "hostname": s.hostname(), "domain": st.Domain, "origin": s.Origin(), "origin_mode": mode, "engine": kind,
 		"addresses": s.addresses(), "uptime_s": int64(time.Since(s.started).Seconds()), "services": services,
 		"service_errors": serrs,
+		"open_services":  openNames(s.OpenServices()),
 		"counts":         counts, "last_backup": st.LastBackup, "alerts": len(s.Alerts()), "fingerprint": s.Fingerprint(),
 		"ldap_port": st.LDAPPort, "radius_port": RadiusPort, "kanidm_port": KanidmPort,
 		// ports: what the enabled modules listen on (keel: the LAN NIC's ACL, docs/80 §44);
@@ -262,4 +263,14 @@ func (s *Server) putSettings(r *http.Request) (any, error) {
 		s.prune()
 	}
 	return s.settingsOut(r), nil
+}
+
+// openNames: the ids of the services open to every account (GET /v1/status "open_services":
+// the overview reminds the administrator to give each a group, docs/05 §1.10).
+func openNames(cs []Consumer) []string {
+	out := []string{}
+	for _, c := range cs {
+		out = append(out, c.ID)
+	}
+	return out
 }

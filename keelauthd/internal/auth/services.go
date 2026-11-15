@@ -225,6 +225,8 @@ func (s *Server) BringUp() error {
 	s.hmu.Unlock()
 	if err != nil {
 		s.Log.Printf("bring-up: %v", err)
+	} else if cerr := s.closeByDefault(); cerr != nil {
+		s.Log.Printf("bring-up: services of the older state: %v", cerr)
 	}
 	svc := s.waitServices()
 	for _, n := range s.serviceNames() {

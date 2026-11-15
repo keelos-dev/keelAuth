@@ -65,6 +65,9 @@ func testSeed(key string) *Seed {
 func startServer(t *testing.T, sy *sys.Fake, eng engine.Engine, sd *Seed) *Server {
 	t.Helper()
 	s, err := NewServer(sy, eng, "/data/keelauth", "test", log.New(io.Discard, "", 0))
+	if s != nil {
+		s.openUnbound = true // TestClosedByDefault and the like switch it off
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

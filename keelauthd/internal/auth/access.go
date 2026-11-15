@@ -14,9 +14,17 @@ import (
 // (keelNAS, through keel), LDAP (devices, applications that bind), Wi-Fi (RADIUS), each SSO
 // application (oidc:<client>), each sync key (sync:<key id>: a mail server, a gateway). The
 // administrator names the group of each (State.ServiceGroups); a member of it, directly or
-// through a group in it, may use the service. A service without a group is open to every
-// account, as all were before there were groups for them. keelAuth's own page is always open
-// (to change the password).
+// through a group in it, may use the service. keelAuth's own page is always open (to change
+// the password).
+//
+// **A service nobody chose a group for is closed: nobody may use it** (docs/05 §1.10,
+// 2026-11-15: "an account's base is its mailbox; everything else is given"). Forgetting to
+// choose must end in "nobody", not in "everybody". "Every account" can be chosen, as a
+// choice ("*" in ServiceGroups) the page shows. Before that day a service without a group
+// was open to all: closeByDefault writes that down for the services of an older state, once.
+//
+// The exception is mail (maildomains.go): a mail server without a group serves the accounts
+// that have one of its domains ticked.
 //
 // Enforced where each service reads accounts: the LDAP directory, the OIDC provider, the
 // RADIUS files, GET /v1/sync/accounts, POST /v1/sync/verify.
@@ -32,6 +40,17 @@ const (
 	AccessWiFi = "wifi"
 	accessOIDC = "oidc:"
 	accessSync = "sync:"
+
+	// everyAccount in ServiceGroups: the service is open to every account, by choice.
+	everyAccount = "*"
+)
+
+// Scopes: who a service is for (Consumer.Scope).
+const (
+	scopeNone  = "none"  // nobody: no group chosen yet
+	scopeGroup = "group" // the members of Group
+	scopeAll   = "all"   // every account
+	scopeTicks = "ticks" // a mail server without a group: the accounts with a domain of its ticked
 )
 
 // Consumer is one service accounts can be allowed into.
@@ -39,7 +58,10 @@ type Consumer struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"` // smb, ldap, wifi, oidc, sync
 	Name string `json:"name"` // what to show
-	// Group: whose members may use it; "" = every account.
+	// Scope: who it is for: "none" (nobody yet), "group" (the members of Group), "all" (every
+	// account), "ticks" (a mail server without a group: accounts with a domain ticked).
+	Scope string `json:"scope"`
+	// Group: whose members may use it, when Scope is "group"; else "".
 	Group string `json:"group"`
 	// Missing: the group is named and does not exist (it was deleted): nobody may use the
 	// service until it is made again or another is chosen.
@@ -121,13 +143,20 @@ func (s *Server) Consumers() []Consumer {
 	for i := range out {
 		c := &out[i]
 		if kanidm && (c.Kind == "ldap" || c.Kind == "oidc") {
-			c.Unlimited, c.Users = true, len(names)
+			c.Unlimited, c.Users, c.Scope = true, len(names), scopeAll
 			continue
 		}
-		c.Group = st.ServiceGroups[c.ID]
-		if c.Group != "" {
-			_, err := s.Eng.Group(c.Group)
+		switch g := st.ServiceGroups[c.ID]; {
+		case g == everyAccount:
+			c.Scope = scopeAll
+		case g != "":
+			c.Scope, c.Group = scopeGroup, g
+			_, err := s.Eng.Group(g)
 			c.Missing = err != nil
+		case len(c.MailDomains) > 0:
+			c.Scope = scopeTicks
+		default:
+			c.Scope = scopeNone
 		}
 		for _, n := range names {
 			if ac.allowed(n, c.ID) {
@@ -147,16 +176,26 @@ func (s *Server) getConsumers(r *http.Request) (any, error) {
 	return map[string]any{"consumers": s.Consumers(), "mail_domains": s.MailDomains(), "mail_domains_ticked": tickedMailDomains(st)}, nil
 }
 
-// putConsumer names the group of a service: {"group": "telework"}, "" = every account. A
-// group that does not exist yet is made (empty: nobody has the service until somebody is
-// put in).
+// putConsumer says who a service is for: {"group": "telework"} its members (a group that
+// does not exist yet is made, empty: nobody has the service until somebody is put in);
+// {"all": true} every account; {"group": ""} nobody (a mail server's: the accounts with a
+// domain ticked). Until 2026-11-15 {"group": ""} meant every account: a caller from then
+// closes the service, which is the safe way to be wrong.
 func (s *Server) putConsumer(r *http.Request) (any, error) {
 	id := r.PathValue("id")
 	var req struct {
 		Group string `json:"group"`
+		All   bool   `json:"all"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
+	}
+	group := strings.ToLower(strings.TrimSpace(req.Group))
+	if req.All {
+		if group != "" {
+			return nil, bad("a group or all, not both")
+		}
+		group = everyAccount
 	}
 	var found *Consumer
 	for _, c := range s.Consumers() {
@@ -168,11 +207,14 @@ func (s *Server) putConsumer(r *http.Request) (any, error) {
 	if found == nil {
 		return nil, notFound("no service %q", id)
 	}
-	if found.Unlimited && strings.TrimSpace(req.Group) != "" {
+	if found.Unlimited && group != "" && group != everyAccount {
 		return nil, coded(http.StatusConflict, "engine_kanidm",
 			"%s cannot be limited to a group on Kanidm, the old engine (it serves %s itself): deploy a new keelAuth for that", found.Name, found.Name)
 	}
-	if err := s.setServiceGroup(id, found.Name, strings.ToLower(strings.TrimSpace(req.Group))); err != nil {
+	if found.Unlimited {
+		group = everyAccount // Kanidm serves it to everybody whatever is written here
+	}
+	if err := s.setServiceGroup(id, found.Name, group); err != nil {
 		return nil, err
 	}
 	for _, c := range s.Consumers() {
@@ -183,11 +225,11 @@ func (s *Server) putConsumer(r *http.Request) (any, error) {
 	return nil, notFound("no service %q", id)
 }
 
-// setServiceGroup binds the service to the group ("" = unbinds), making the group when it
-// is not there. Every reader of accounts must look again: the revision goes up and the
+// setServiceGroup binds the service to the group (everyAccount: to all; "": to nobody),
+// making the group when it is not there. Every reader of accounts must look again: the revision goes up and the
 // RADIUS files are written anew.
 func (s *Server) setServiceGroup(id, what, group string) error {
-	if group != "" {
+	if group != "" && group != everyAccount {
 		if !ValidName(group) {
 			return bad("group %q: a lowercase letter, then lowercase letters, digits, - or _ (at most 32)", group)
 		}
@@ -212,9 +254,12 @@ func (s *Server) setServiceGroup(id, what, group string) error {
 	if err != nil {
 		return err
 	}
-	if group == "" {
+	switch group {
+	case "":
+		s.Log.Printf("access: %s is closed (no group)", id)
+	case everyAccount:
 		s.Log.Printf("access: %s is open to every account", id)
-	} else {
+	default:
 		s.Log.Printf("access: %s is for the members of %s", id, group)
 	}
 	s.accessChanged()
@@ -238,16 +283,106 @@ func servicesOf(st *State, group string) []string {
 type accessChecker struct {
 	st       *State
 	memberOf map[string][]string // flattened
+	open     bool                // Server.openUnbound
 }
 
 func (s *Server) accessChecker() accessChecker {
 	_, _, memberOf := ldapDir{s}.flat()
-	return accessChecker{st: s.State(), memberOf: memberOf}
+	return accessChecker{st: s.State(), memberOf: memberOf, open: s.openUnbound}
 }
 
 func (a accessChecker) allowed(name, consumer string) bool {
-	group := a.st.ServiceGroups[consumer]
-	return group == "" || slices.Contains(a.memberOf[name], group)
+	return a.via(name, consumer) != ""
+}
+
+// via: how the account has the service: the group's name, everyAccount, viaTick (a mail
+// server without a group, a domain of its ticked for the account), "" = it has not.
+func (a accessChecker) via(name, consumer string) string {
+	switch group := a.st.ServiceGroups[consumer]; {
+	case group == everyAccount:
+		return everyAccount
+	case group != "":
+		if slices.Contains(a.memberOf[name], group) {
+			return group
+		}
+	case a.open:
+		return everyAccount
+	default:
+		if id, ok := strings.CutPrefix(consumer, accessSync); ok {
+			if d := a.st.Users[name]; d != nil {
+				for _, k := range a.st.SyncKeys {
+					if k.ID == id && slices.ContainsFunc(k.MailDomains, func(dom string) bool { return slices.Contains(d.MailDomains, dom) }) {
+						return viaTick
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+const viaTick = "tick"
+
+// closeByDefault: once, on a state from before services were closed by default: every
+// service there is now and that has no group is written down as open to every account,
+// which is what it was. A mail server's stays as it is (ticks). Modules that are off have
+// no service yet: switched on later they start closed, like every new service.
+func (s *Server) closeByDefault() error {
+	if s.State().ClosedDefault {
+		return nil
+	}
+	ids := []string{AccessSMB}
+	if s.moduleOn("ldap") {
+		ids = append(ids, AccessLDAP)
+	}
+	if s.moduleOn("radius") {
+		ids = append(ids, AccessWiFi)
+	}
+	cs, err := s.Eng.OAuth2s()
+	if err != nil {
+		return err // again at the next start: an application must not be closed by a failed read
+	}
+	for _, c := range cs {
+		ids = append(ids, accessOIDC+c.Name)
+	}
+	opened := []string{}
+	err = s.update(func(st *State) error {
+		if st.ClosedDefault {
+			return nil
+		}
+		for _, k := range st.SyncKeys {
+			if len(k.MailDomains) == 0 {
+				ids = append(ids, accessSync+k.ID)
+			}
+		}
+		if st.ServiceGroups == nil {
+			st.ServiceGroups = map[string]string{}
+		}
+		for _, id := range ids {
+			if st.ServiceGroups[id] == "" {
+				st.ServiceGroups[id] = everyAccount
+				opened = append(opened, id)
+			}
+		}
+		st.ClosedDefault = true
+		return nil
+	}, false)
+	if err == nil && len(opened) > 0 {
+		s.Log.Printf("access: services without a group stay open to every account, as before this version: %s", strings.Join(opened, ", "))
+	}
+	return err
+}
+
+// OpenServices: the services open to every account, for the page to remind of (a mail
+// server is meant to be: the mailbox is what every account has).
+func (s *Server) OpenServices() []Consumer {
+	out := []Consumer{}
+	for _, c := range s.Consumers() {
+		if c.Scope == scopeAll && !c.Unlimited && len(c.MailDomains) == 0 {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // allowed: one account, one service.

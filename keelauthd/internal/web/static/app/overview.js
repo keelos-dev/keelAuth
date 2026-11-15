@@ -3,6 +3,7 @@ import { useEffect, useState } from "preact/hooks";
 import { api, html } from "./api.js";
 import { fmtTime, t, tr } from "./i18n.js";
 import { KV, Spinner } from "./ui.js";
+import { svcLabel } from "./users.js";
 
 // Alerts follows the status (every 30 seconds, main.js): asked once at the first look it kept
 // saying "radiusd is not up" from the seconds after an upgrade while the tile next to it
@@ -13,6 +14,16 @@ function Alerts({ status }) {
   if (!as || as.length === 0) return null;
   return html`<div class="card"><div class="row-head"><h3>${t("ov.alerts")}</h3></div>
     ${as.map((a) => html`<p class=${a.level === "error" ? "error" : "warn"}>${tr("alert." + a.code, a.text, a.object)}</p>`)}</div>`;
+}
+
+// OpenServices: the services every account may use (GET v1/status "open_services"): a
+// reminder to give each a group; they were open before services started closed (docs/05 §1.10).
+function OpenServices({ ids }) {
+  const [cs, setCs] = useState([]);
+  useEffect(() => { if (ids.length) api("GET", "v1/consumers").then((r) => setCs(r.consumers || [])).catch(() => {}); }, [ids.join(" ")]);
+  if (!ids.length) return null;
+  const names = ids.map((id) => { const c = cs.find((x) => x.id === id); return c ? svcLabel(c) : id; });
+  return html`<div class="card"><p class="warn">${t("ov.open", names.length, names.join(", "))} <a href="#/groups">${t("ov.opengo")}</a></p></div>`;
 }
 
 const up = (ok, why) => html`<span class=${"badge" + (ok ? " ok" : "")} style=${ok ? null : "color:var(--danger);border-color:var(--danger)"}>${ok ? t("ov.running") : t("ov.down")}</span>${!ok && why ? html` <span class="muted small">${why}</span>` : null}`;
@@ -37,6 +48,7 @@ export function Overview({ status }) {
         <${KV} k=${t("ov.mk")} v=${mk.slots.includes("keel") ? t("gen.mkkeel") : mk.slots.includes("passphrase") ? t("gen.mkpass", fmtTime(mk.passphrase_set)) : t("gen.mknone")} />
       </div></div>
     <${Alerts} status=${status} />
+    <${OpenServices} ids=${s.open_services || []} />
     <div class="tiles">
       <div class="card"><div class="row-head"><h3>${t("ov.services")}</h3></div>
         <table class="kv-table"><tbody>

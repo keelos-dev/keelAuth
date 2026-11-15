@@ -74,9 +74,14 @@ at `group_list` first and ask if it is unclear which). Return the generated pass
 
 **Give somebody a service** (mail, the shares, working from home, Wi-Fi, an application). A service
 belongs to a group and whoever is in the group has it: `service_list` shows each service with its
-group, then `group_members` puts the person in. A service whose group is `""` is open to every
-account already. To restrict a service to a group, `service_group` (it changes who gets in: confirm
-first; the group is made when it is not there, and starts empty).
+group, then `group_members` puts the person in. `scope` says who a service is for: `group` (the
+members of `group`), `none` (nobody yet: a new service starts closed until a group is chosen),
+`all` (every account, chosen on purpose), `ticks` (a mail server without a group: accounts with a
+mail domain ticked). To choose a service's group, `service_group` (it changes who gets in: confirm
+first; the group is made when it is not there, and starts empty). Open a service to every account
+(`all: true`) only when the user says so; the usual case is the mail server, so that every account
+has a mailbox. `user_list` and `user_get` show each account's `services` and how it has each
+(`via`: the group, `*` = open to all, `tick`).
 
 **Somebody leaves.** `user_disable`, not deletion: logins stop everywhere at once, and the account
 can be looked at or enabled again later. Disabling takes effect on LDAP, SSO and Wi-Fi immediately;

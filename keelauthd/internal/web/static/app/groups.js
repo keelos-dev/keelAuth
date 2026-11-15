@@ -68,12 +68,15 @@ export function Groups() {
 // groups there are and the service's usual one, made when it is chosen.
 function Services({ consumers, groups, onDone }) {
   if (!consumers.length) return null;
+  // "*" = every account (asked first: it is the one choice that lets everybody in)
+  const cur = (c) => (c.scope === "all" ? "*" : c.group);
   const set = async (c, group) => {
-    if (group === c.group) return;
-    if (group === "" && !await ask(t("svc.openq", svcLabel(c)))) { onDone(); return; }
-    try { await api("PUT", "v1/consumers/" + enc(c.id), { group }); } catch (e) { fail(e); }
+    if (group === cur(c)) return;
+    if (group === "*" && !await ask(t("svc.openq", svcLabel(c)))) { onDone(); return; }
+    try { await api("PUT", "v1/consumers/" + enc(c.id), group === "*" ? { all: true } : { group }); } catch (e) { fail(e); }
     onDone();
   };
+  const mail = (c) => (c.mail_domains || []).length > 0;
   const names = groups.filter((g) => !g.builtin).map((g) => g.name);
   return html`<div class="card"><div class="row-head"><h3>${t("svc.title")}</h3></div>
     <p class="ka-for">${t("svc.for")}</p>
@@ -81,10 +84,13 @@ function Services({ consumers, groups, onDone }) {
       <thead><tr><th>${t("svc.service")}</th><th>${t("svc.group")}</th><th>${t("svc.users")}</th></tr></thead>
       <tbody>${consumers.map((c) => { const opts = [...names]; if (c.group && !opts.includes(c.group)) opts.push(c.group); const fresh = c.suggest && !opts.includes(c.suggest) ? c.suggest : "";
         return html`<tr><td><b>${svcLabel(c)}</b>${(c.mail_domains || []).length ? html` <span class="muted small">${t("svc.domains", c.mail_domains.join(", "))}</span>` : ""}</td>
-          <td>${c.unlimited ? html`<span class="muted">${t("svc.unlimited")}</span>` : html`<select value=${c.group} onChange=${(e) => set(c, e.target.value)}>
-              <option value="">${t("svc.everyone")}</option>
+          <td>${c.unlimited ? html`<span class="muted">${t("svc.unlimited")}</span>` : html`<select class=${"svc-" + c.scope} value=${cur(c)} onChange=${(e) => set(c, e.target.value)}>
+              <option value="">${mail(c) ? t("svc.ticks") : t("svc.nobody")}</option>
               ${opts.map((n) => html`<option value=${n}>${n}</option>`)}
-              ${fresh && html`<option value=${fresh}>${t("svc.newgroup", fresh)}</option>`}</select>
+              ${fresh && html`<option value=${fresh}>${t("svc.newgroup", fresh)}</option>`}
+              <option value="*">${t("svc.everyone")}</option></select>
+            ${c.scope === "all" && !mail(c) && html` <span class="badge open">${t("svc.open")}</span>`}
+            ${c.scope === "none" && html` <span class="badge">${t("svc.closed")}</span>`}
             ${c.missing && html` <span class="warn small">${t("svc.missing", c.group)}</span>`}`}</td>
           <td>${c.users}${(c.no_totp || []).length > 0 && html` <details class="inline"><summary class="warn small">${t("svc.nototp", c.no_totp.length)}</summary><span class="small">${c.no_totp.join(", ")}</span></details>`}</td></tr>`; })}</tbody></table></div>
   </div>`;

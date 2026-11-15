@@ -21,6 +21,10 @@ type Directory interface {
 	BaseDN() string // dc=auth,dc=office,dc=lan
 	Domain() string // auth.office.lan
 	People() []Person
+	// PeopleSeenBy: the people a bound connection finds: who ("alice", "device:printer1").
+	// A device that stands for another service finds that service's people; a person who
+	// may bind only because of such a service finds nobody but himself.
+	PeopleSeenBy(bound string) []Person
 	Groups() []Group
 	// CheckPassword: an enabled person with this password (a bind).
 	CheckPassword(name, password string) bool
@@ -394,7 +398,7 @@ func (cn *conn) search(id int, op elem) bool {
 	if dev, ok := strings.CutPrefix(cn.bound, "device:"); ok {
 		reads = cn.s.Dir.Reads(dev)
 	}
-	for _, e := range cn.s.entries(reads) {
+	for _, e := range cn.s.entries(cn.bound, reads) {
 		if !inScope(e.dn, base, baseDN, scope) || !f.match(e) {
 			continue
 		}
@@ -490,7 +494,7 @@ func (e *entry) encode(attrs []string, typesOnly bool) []byte {
 
 // entries is the whole tree as of now: the root DSE, the base, every person, every group; of
 // the feature modules' attributes those of reads.
-func (s *Server) entries(reads []string) []*entry {
+func (s *Server) entries(bound string, reads []string) []*entry {
 	base := s.Dir.BaseDN()
 	domain := s.Dir.Domain()
 	root := newEntry("")
@@ -511,7 +515,7 @@ func (s *Server) entries(reads []string) []*entry {
 			byUser[m] = append(byUser[m], g.Name)
 		}
 	}
-	people := s.Dir.People()
+	people := s.Dir.PeopleSeenBy(bound)
 	sort.Slice(people, func(i, j int) bool { return people[i].Name < people[j].Name })
 	for _, p := range people {
 		e := newEntry("name=" + p.Name + "," + base)

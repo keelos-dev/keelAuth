@@ -125,13 +125,17 @@ type State struct {
 	BindPW   string                `json:"ldap_bind,omitempty"` // sealed password of BindAccount
 	Tokens   []Token               `json:"tokens"`
 	SyncKeys []Token               `json:"sync_keys"`
-	// ServiceGroups: the group whose members may use a service (consumer id → group name);
-	// a service not in it is open to every account (access.go).
+	// ServiceGroups: who may use a service (consumer id → a group's name: its members; "*":
+	// every account). A service not in it is closed: nobody may use it (access.go).
 	ServiceGroups map[string]string `json:"service_groups,omitempty"`
-	APIKeys       []Token           `json:"api_keys"`
-	Revision      int64             `json:"revision"`
-	BackupKeep    int               `json:"backup_keep"`
-	LastBackup    string            `json:"last_backup,omitempty"`
+	// ClosedDefault: this state was written under the rule above. One from before 2026-11-15
+	// (a service not in ServiceGroups was open to everybody) has its unbound services opened
+	// by name once (closeByDefault), so that an upgrade locks nobody out.
+	ClosedDefault bool    `json:"services_closed_default,omitempty"`
+	APIKeys       []Token `json:"api_keys"`
+	Revision      int64   `json:"revision"`
+	BackupKeep    int     `json:"backup_keep"`
+	LastBackup    string  `json:"last_backup,omitempty"`
 	// Timezone: what the page shows times in when keelAuth runs standalone (keel's own zone
 	// otherwise, keelOS docs/47); "" = UTC.
 	Timezone string `json:"timezone,omitempty"`
@@ -165,6 +169,10 @@ type Device struct {
 	PasswordAt  string `json:"password_set_at"`
 	// Features: the feature modules whose LDAP attributes this device reads; none by default.
 	Features []string `json:"features,omitempty"`
+	// Service: the service this device asks for: it finds the people who have that service
+	// instead of those who have LDAP (a mail server that checks passwords over LDAP reads
+	// the mail server's list, docs/02 §9.6). "" = LDAP itself.
+	Service string `json:"service,omitempty"`
 }
 
 // OIDCRoles is one application's group meanings.

@@ -37,15 +37,81 @@ type UserOut struct {
 	TOTPSetAt string `json:"totp_set_at"`
 	// Features: the values of the feature modules that are on (features.go, docs/02 §10).
 	Features map[string]any `json:"features,omitempty"`
+	// Services: every service the account has now, and how (docs/05 §1.10).
+	Services []UserService `json:"services"`
 }
 
-func (s *Server) userOut(u *engine.User) UserOut {
+// UserService is one service an account may use. Via: the group that gives it (the account
+// is in it, directly or through a group in it), "*" = the service is open to every
+// account, "tick" = a mail domain ticked for the account.
+type UserService struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	Via  string `json:"via"`
+}
+
+// userView is what userOut needs of the whole (the memberships, the services), gathered
+// once for a list of accounts.
+type userView struct {
+	ac   accessChecker
+	cons []Consumer
+}
+
+func (s *Server) userView() userView {
+	v := userView{ac: s.accessChecker()}
+	st := v.ac.st
+	v.cons = []Consumer{{ID: AccessSMB, Kind: "smb", Name: "keelNAS"}}
+	if s.moduleOn("ldap") {
+		v.cons = append(v.cons, Consumer{ID: AccessLDAP, Kind: "ldap", Name: "LDAP"})
+	}
+	if s.moduleOn("radius") {
+		v.cons = append(v.cons, Consumer{ID: AccessWiFi, Kind: "wifi", Name: "Wi-Fi"})
+	}
+	if cs, err := s.Eng.OAuth2s(); err == nil && s.moduleOn("oidc") {
+		for _, c := range cs {
+			name := c.DisplayName
+			if name == "" {
+				name = c.Name
+			}
+			v.cons = append(v.cons, Consumer{ID: accessOIDC + c.Name, Kind: "oidc", Name: name})
+		}
+	}
+	for _, k := range st.SyncKeys {
+		v.cons = append(v.cons, Consumer{ID: accessSync + k.ID, Kind: "sync", Name: k.Name})
+	}
+	if s.legacyEngine() { // Kanidm serves these to everybody itself (docs/02 §9.4)
+		for i := range v.cons {
+			v.cons[i].Unlimited = v.cons[i].Kind == "ldap" || v.cons[i].Kind == "oidc"
+		}
+	}
+	return v
+}
+
+func (v userView) services(name string) []UserService {
+	out := []UserService{}
+	for _, c := range v.cons {
+		via := v.ac.via(name, c.ID)
+		if c.Unlimited {
+			via = everyAccount
+		}
+		if via != "" {
+			out = append(out, UserService{ID: c.ID, Kind: c.Kind, Name: c.Name, Via: via})
+		}
+	}
+	return out
+}
+
+func (s *Server) userOut(u *engine.User) UserOut { return s.userOutIn(s.userView(), u) }
+
+func (s *Server) userOutIn(v userView, u *engine.User) UserOut {
 	o := UserOut{Name: u.Name, DisplayName: u.DisplayName, Mail: u.Mail, Enabled: u.Enabled, Groups: u.Groups, UID: u.UID,
 		Admin: slices.Contains(u.Groups, AdminGroup)}
 	if o.Groups == nil {
 		o.Groups = []string{}
 	}
-	o.MailDomains, o.Addresses = []string{}, s.accessChecker().addresses(u.Name)
+	o.MailDomains, o.Addresses = []string{}, v.ac.addresses(u.Name)
+	o.Services = v.services(u.Name)
 	o.TOTP, o.TOTPSetAt = s.totpNeeded(u.Name), s.totpSetAt(u.Name)
 	if fs := s.enabledFeatures(); len(fs) > 0 {
 		o.Features = s.featureValues(u.Name, fs)
@@ -69,11 +135,12 @@ func (s *Server) getUsers(r *http.Request) (any, error) {
 		return nil, err
 	}
 	out := []UserOut{}
+	view := s.userView()
 	for i := range us {
 		if us[i].Name == BindAccount {
 			continue
 		}
-		if o := s.userOut(&us[i]); keep(&o) {
+		if o := s.userOutIn(view, &us[i]); keep(&o) {
 			out = append(out, o)
 		}
 	}

@@ -161,8 +161,10 @@ func encText(f string) ([]byte, string) {
 
 type fakeDir struct{ people []Person }
 
-func (fakeDir) BaseDN() string { return "dc=auth,dc=office,dc=lan" }
-func (fakeDir) Domain() string { return "auth.office.lan" }
+func (fakeDir) BaseDN() string                 { return "dc=auth,dc=office,dc=lan" }
+func (fakeDir) Domain() string                 { return "auth.office.lan" }
+func (d fakeDir) PeopleSeenBy(string) []Person { return d.People() }
+
 func (d fakeDir) People() []Person {
 	return []Person{
 		{Name: "alice", DisplayName: "Alice A", Mails: []string{"alice@example.com", "alice@other.com"}, UID: 1000, UUID: "u-alice", Groups: []string{"staff", "keelauth-admins"},

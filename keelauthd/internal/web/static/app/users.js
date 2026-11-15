@@ -6,7 +6,7 @@ import { fmtTime, pwRules, t } from "./i18n.js";
 import { ask, Dialog, FormDialog, Spinner, toast } from "./ui.js";
 import { Phones } from "./phones.js";
 import { Totp } from "./totp.js";
-import { FeatureFields } from "./features.js";
+import { featCell, featOptions, FeatureFields, featText, optTitle } from "./features.js";
 
 // usePwPolicy: the password rules in force (status.password_policy), for hints and minlength.
 export function usePwPolicy() {
@@ -135,6 +135,8 @@ export function Users() {
   const [dlg, setDlg] = useState(null);
   const [totpOn, setTotpOn] = useState(false); // the totp module: the list says who has set up an authenticator
   const [features, setFeatures] = useState([]); // the feature modules (features.js)
+  const [q, setQ] = useState(""); // the search box: name, display name, mail, the feature modules' values
+  const [pick, setPick] = useState({}); // a choice column's filter: "module.field" -> code, "-" = accounts without one
   const load = () => Promise.all([api("GET", "v1/users"), api("GET", "v1/groups"), api("GET", "v1/consumers").catch(() => ({})), api("GET", "v1/totp").catch(() => ({})),
     api("GET", "v1/features").catch(() => ({}))])
     .then(([u, g, c, tp, fs]) => { setUs(u.users || []); setGroups(g.groups || []); setConsumers(c.consumers || []); setDomains(c.mail_domains_ticked || []); setTotpOn(!!tp.enabled); setFeatures(fs.features || []); }).catch(fail);
@@ -149,12 +151,35 @@ export function Users() {
     if (!await ask(t("users.deleteq", u.name))) return;
     try { await api("DELETE", "v1/users/" + enc(u.name)); load(); } catch (e) { fail(e); }
   };
-  return html`<div class="card"><div class="row-head"><h3>${t("nav.users")} <span class="muted small">${us.length}</span></h3>
+  // the one-row feature modules that are on: their "list" fields are columns, all their values are searched
+  const one = features.filter((f) => f.enabled && !f.rows);
+  const cols = one.flatMap((f) => f.fields.filter((fd) => fd.list).map((fd) => ({ f, fd, key: f.name + "." + fd.name })));
+  const text = q.trim().toLowerCase();
+  const shown = us.filter((u) => {
+    for (const c of cols) {
+      const want = pick[c.key];
+      if (!want) continue;
+      const v = ((u.features || {})[c.f.name] || {})[c.fd.name] || "";
+      if (want === "-" ? v !== "" : v !== want) return false;
+    }
+    if (!text) return true;
+    const hay = [u.name, u.display_name, u.mail, ...(u.addresses || []), ...one.flatMap((f) => f.fields.map((fd) => featCell(u, f, fd)))];
+    return hay.some((h) => h && String(h).toLowerCase().includes(text));
+  });
+  const filtering = !!text || cols.some((c) => pick[c.key]);
+  return html`<div class="card"><div class="row-head"><h3>${t("nav.users")} <span class="muted small">${filtering ? shown.length + " / " + us.length : us.length}</span></h3>
       <button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("users.new")}</button></div>
+    ${us.length > 0 && html`<div class="aud-bar"><input type="search" placeholder=${t("users.search")} value=${q} onInput=${(e) => setQ(e.target.value)} />
+      ${cols.filter((c) => c.fd.type === "choice").map((c) => html`<label>${featText(c.fd.title)}
+        <select value=${pick[c.key] || ""} onChange=${(e) => setPick((p) => ({ ...p, [c.key]: e.target.value }))}>
+          <option value="">${t("users.all")}</option>
+          ${featOptions(c.f, c.fd).map((o) => html`<option value=${o.code}>${optTitle(o)}</option>`)}
+          <option value="-">${t("users.unset")}</option></select></label>`)}</div>`}
     ${us.length === 0 && html`<p class="muted">${t("users.none")}</p>`}
-    ${us.length > 0 && html`<div class="table-wrap tall"><table class="data plain">
-      <thead><tr><th>${t("users.name")}</th><th>${t("users.display")}</th><th>${t("users.mail")}</th><th>${t("users.groups")}</th><th>${t("users.setat")}</th>${totpOn && html`<th>${t("users.totp")}</th>`}<th></th></tr></thead>
-      <tbody>${us.map((u) => html`<tr class=${u.enabled ? "" : "stale"}><td class="nowrap"><b>${u.name}</b> <${Flags} u=${u} /></td><td>${u.display_name}</td><td>${[u.mail, ...(u.addresses || [])].filter(Boolean).join(", ")}</td>
+    ${us.length > 0 && shown.length === 0 && html`<p class="muted">${t("users.nomatch")}</p>`}
+    ${shown.length > 0 && html`<div class="table-wrap tall"><table class="data plain">
+      <thead><tr><th>${t("users.name")}</th><th>${t("users.display")}</th>${cols.map((c) => html`<th>${featText(c.fd.title)}</th>`)}<th>${t("users.mail")}</th><th>${t("users.groups")}</th><th>${t("users.setat")}</th>${totpOn && html`<th>${t("users.totp")}</th>`}<th></th></tr></thead>
+      <tbody>${shown.map((u) => html`<tr class=${u.enabled ? "" : "stale"}><td class="nowrap"><b>${u.name}</b> <${Flags} u=${u} /></td><td>${u.display_name}</td>${cols.map((c) => html`<td class="nowrap">${featCell(u, c.f, c.fd) || "–"}</td>`)}<td>${[u.mail, ...(u.addresses || [])].filter(Boolean).join(", ")}</td>
         <td>${u.groups.join(", ") || "–"}</td><td>${u.password_set_at ? fmtTime(u.password_set_at) : "–"}</td>
         ${totpOn && html`<td>${u.totp ? fmtTime(u.totp_set_at) : html`<span class="warn">${t("users.nototp")}</span>`}</td>`}
         <td class="nowrap"><button class="btn" onClick=${() => setDlg({ kind: "edit", user: u })}>${t("edit")}</button>

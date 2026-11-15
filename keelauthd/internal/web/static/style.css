@@ -808,3 +808,4 @@ details.inline[open] span { display: block; margin-top: 2px; }
 fieldset.feat table.feat-rows input { width: 100%; min-width: 6em; box-sizing: border-box; }
 fieldset.feat { margin-top: 8px; }
 fieldset.feat table.feat-rows button { white-space: nowrap; }
+.aud-bar select { height: 28px; box-sizing: border-box; font-size: 13px; }

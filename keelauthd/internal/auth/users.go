@@ -3,10 +3,13 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"keelauth/internal/engine"
@@ -61,14 +64,76 @@ func (s *Server) getUsers(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	keep, err := s.userFilter(r.URL.Query())
+	if err != nil {
+		return nil, err
+	}
 	out := []UserOut{}
 	for i := range us {
 		if us[i].Name == BindAccount {
 			continue
 		}
-		out = append(out, s.userOut(&us[i]))
+		if o := s.userOut(&us[i]); keep(&o) {
+			out = append(out, o)
+		}
 	}
 	return map[string]any{"users": out}, nil
+}
+
+// userFilter: GET /v1/users?q=…&<field>=… (docs/02 §10.4). q: the text is somewhere in the
+// name, the display name, the mail addresses or a value of a feature module (case ignored).
+// <field>: a field of a one-row feature module that is on has exactly this value
+// (employeeNumber=11011, employeeType=contract; an empty value = accounts without one).
+func (s *Server) userFilter(q url.Values) (func(*UserOut) bool, error) {
+	type exact struct{ module, field, want string }
+	var exacts []exact
+	text := ""
+	for k, vs := range q {
+		if k == "q" {
+			text = strings.ToLower(strings.TrimSpace(vs[0]))
+			continue
+		}
+		found := false
+		for _, f := range featureDefs {
+			if f.Rows || !s.moduleOn(f.Name) {
+				continue
+			}
+			for _, fd := range f.Fields {
+				if fd.Name == k {
+					exacts, found = append(exacts, exact{f.Name, k, vs[0]}), true
+				}
+			}
+		}
+		if !found {
+			return nil, bad("no filter %q: q, or a field of a feature module that is on", k)
+		}
+	}
+	val := func(o *UserOut, module, field string) string {
+		if m, ok := o.Features[module].(map[string]any); ok && m[field] != nil {
+			return fmt.Sprint(m[field])
+		}
+		return ""
+	}
+	return func(o *UserOut) bool {
+		for _, e := range exacts {
+			if !strings.EqualFold(val(o, e.module, e.field), e.want) {
+				return false
+			}
+		}
+		if text == "" {
+			return true
+		}
+		hay := []string{o.Name, o.DisplayName, o.Mail}
+		hay = append(hay, o.Addresses...)
+		for _, v := range o.Features {
+			if m, ok := v.(map[string]any); ok {
+				for _, x := range m {
+					hay = append(hay, fmt.Sprint(x))
+				}
+			}
+		}
+		return slices.ContainsFunc(hay, func(h string) bool { return strings.Contains(strings.ToLower(h), text) })
+	}, nil
 }
 
 // lookupUser is the engine's user; the bind account does not exist for the API.

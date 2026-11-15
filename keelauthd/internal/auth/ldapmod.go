@@ -91,6 +91,7 @@ func (d ldapDir) People() []ldap.Person {
 			p.Mails = []string{u.Mail}
 		}
 		p.Mails = append(p.Mails, ac.addresses(u.Name)...)
+		p.Extra = d.s.ldapExtras(u.Name)
 		out = append(out, p)
 	}
 	return out
@@ -103,6 +104,14 @@ func (d ldapDir) Groups() []ldap.Group {
 		out = append(out, ldap.Group{Name: g.Name, Description: g.Description, Members: members[g.Name], GID: g.GID})
 	}
 	return out
+}
+
+// Reads: the feature modules a device account's bind sees the attributes of.
+func (d ldapDir) Reads(device string) []string {
+	if x := d.s.State().device(device); x != nil {
+		return x.Features
+	}
+	return nil
 }
 
 func (d ldapDir) CheckPassword(name, pw string) bool {

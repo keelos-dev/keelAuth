@@ -165,7 +165,9 @@ func (fakeDir) BaseDN() string { return "dc=auth,dc=office,dc=lan" }
 func (fakeDir) Domain() string { return "auth.office.lan" }
 func (d fakeDir) People() []Person {
 	return []Person{
-		{Name: "alice", DisplayName: "Alice A", Mails: []string{"alice@example.com", "alice@other.com"}, UID: 1000, UUID: "u-alice", Groups: []string{"staff", "keelauth-admins"}},
+		{Name: "alice", DisplayName: "Alice A", Mails: []string{"alice@example.com", "alice@other.com"}, UID: 1000, UUID: "u-alice", Groups: []string{"staff", "keelauth-admins"},
+			Extra: []Extra{{Module: "employee", Classes: []string{"inetOrgPerson"}, Attrs: []Attr{{Name: "employeeNumber", Values: []string{"11011"}}, {Name: "employeeType", Values: []string{"regular"}}}},
+				{Module: "names", Classes: []string{"inetOrgPerson"}, Attrs: []Attr{{Name: "sn", Values: []string{"山田"}}, {Name: "msDS-PhoneticLastName", Values: []string{"ヤマダ"}}}}}},
 		{Name: "bob", DisplayName: "Bob", Mails: []string{"bob@example.com"}, UID: 1001, UUID: "u-bob", Groups: []string{"staff"}},
 		{Name: "carol", UID: 1002, UUID: "u-carol", Groups: []string{}},
 	}
@@ -177,9 +179,19 @@ func (fakeDir) Groups() []Group {
 func (fakeDir) CheckPassword(name, pw string) bool {
 	return name == "alice" && pw == "alice-pw" || name == "bob" && pw == "bob-pw"
 }
+func (fakeDir) Reads(dev string) []string {
+	if dev == "hr" {
+		return []string{"employee"}
+	}
+	return nil
+}
+
 func (fakeDir) CheckToken(t string) (string, bool) {
 	if t == "kad_printer2" {
 		return "printer2", true
+	}
+	if t == "kad_hr" {
+		return "hr", true
 	}
 	return "", false
 }
@@ -357,5 +369,38 @@ func TestRealServer(t *testing.T) {
 	}
 	for _, g := range gs {
 		t.Logf("group %s member=%v", g.dn, g.attrs["member"])
+	}
+}
+
+// A feature module's attributes (Person.Extra) are there only for a device account that reads
+// the module: in the entry, and for the filter.
+func TestFeatureAttributes(t *testing.T) {
+	base := "dc=auth,dc=office,dc=lan"
+	cl, _ := newClient(t)
+	defer cl.c.Close()
+	cl.bind("dn=token", "kad_printer2")
+	if _, rs := cl.search(base, scopeSubtree, "(name=alice)"); len(rs) != 1 || rs[0].attrs["employeenumber"] != nil || rs[0].attrs["sn"] != nil ||
+		strings.Contains(strings.Join(rs[0].attrs["objectclass"], " "), "inetOrgPerson") {
+		t.Fatalf("a device that reads no module sees them: %+v", rs)
+	}
+	if _, rs := cl.search(base, scopeSubtree, "(employeeNumber=11011)"); len(rs) != 0 {
+		t.Fatalf("a device that reads no module can filter by them: %+v", rs)
+	}
+	if code, _ := cl.bind("dn=token", "kad_hr"); code != rcSuccess {
+		t.Fatal("hr bind")
+	}
+	_, rs := cl.search(base, scopeSubtree, "(&(objectClass=inetOrgPerson)(employeeNumber=11011)(employeeType=regular))")
+	if len(rs) != 1 || rs[0].dn != "name=alice,"+base || rs[0].attrs["employeenumber"][0] != "11011" || rs[0].attrs["employeetype"][0] != "regular" {
+		t.Fatalf("hr reads employee: %+v", rs)
+	}
+	if rs[0].attrs["sn"] != nil || rs[0].attrs["msds-phoneticlastname"] != nil {
+		t.Fatalf("hr does not read names: %+v", rs[0].attrs)
+	}
+	if n := strings.Count(strings.Join(rs[0].attrs["objectclass"], " "), "inetOrgPerson"); n != 1 {
+		t.Fatalf("objectclass: %v", rs[0].attrs["objectclass"])
+	}
+	cl.bind("alice", "alice-pw") // a person's bind sees none
+	if _, rs := cl.search(base, scopeSubtree, "(name=alice)"); len(rs) != 1 || rs[0].attrs["employeenumber"] != nil {
+		t.Fatalf("a person's bind sees them: %+v", rs)
 	}
 }

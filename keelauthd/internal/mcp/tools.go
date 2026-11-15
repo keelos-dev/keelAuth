@@ -117,13 +117,17 @@ var tools = []Tool{
 			return st, nil
 		}},
 	{Name: "user_list", Title: "List users",
-		Description: "Every user: name, display name, mail, enabled, groups, admin (member of keelauth-admins), has_nt (false: Wi-Fi and shares do not work until the password is set again), must_change.",
-		InputSchema: obj(map[string]any{}), Annotations: readOnly,
-		Run: func(api Doer, _ map[string]any) (any, error) {
+		Description: "Every user: name, display name, mail, enabled, groups, admin (member of keelauth-admins), has_nt (false: Wi-Fi and shares do not work until the password is set again), must_change. With q: only those with the text in the name, the display name, a mail address or a feature module's value (an employee number, a name's reading).",
+		InputSchema: obj(map[string]any{"q": map[string]any{"type": "string", "description": "text to look for; left out = everybody"}}), Annotations: readOnly,
+		Run: func(api Doer, a map[string]any) (any, error) {
 			var r struct {
 				Users []map[string]any `json:"users"`
 			}
-			if err := api.Do("GET", "/v1/users", nil, &r); err != nil {
+			path := "/v1/users"
+			if q, _ := a["q"].(string); q != "" {
+				path += "?q=" + url.QueryEscape(q)
+			}
+			if err := api.Do("GET", path, nil, &r); err != nil {
 				return nil, err
 			}
 			out := []any{}
@@ -161,14 +165,34 @@ var tools = []Tool{
 			return userSummary(out), nil
 		}},
 	{Name: "feature_list", Title: "List feature modules",
-		Description: "keelAuth's feature modules (attributes on an account, docs/02 §10), e.g. computers = the office computers a person may reach from home: whether each is switched on, its fields and their rules, and how many accounts have values. Switch one on with module_set.",
+		Description: "keelAuth's feature modules (attributes on an account, docs/02 §10), e.g. computers = the office computers a person may reach from home, employee = employee number and employment type, names = family and given name with their readings: whether each is switched on, its fields and their rules (and the LDAP attribute a field is given out as), its settings (conf: the options of a choice field, a fixed length), and how many accounts have values. Switch one on with module_set, change its settings with feature_configure.",
 		InputSchema: obj(map[string]any{}), Annotations: readOnly,
 		Run: func(api Doer, _ map[string]any) (any, error) {
 			var out any
 			return out, api.Do("GET", "/v1/features", nil, &out)
 		}},
+	{Name: "feature_configure", Title: "Change a feature module's settings",
+		Description: "Set a feature module's settings: options = {field: [{\"code\": \"regular\", \"title\": {\"en\": \"Regular\", \"zh\": \"正式员工\", \"ja\": \"正社員\"}}, …]} replaces a choice field's options (employee: employeeType; the code is what applications get and should never change), " +
+			"len = {field: n} fixes a field's exact length (employee: employeeNumber; 0 = any). Fields not named stay. Refused when it would strand values: an option accounts still have, a length the kept values do not have (the answer says who).",
+		InputSchema: obj(map[string]any{"name": map[string]any{"type": "string", "description": "the feature module, e.g. employee"},
+			"options": map[string]any{"type": "object"}, "len": map[string]any{"type": "object"}}, "name"),
+		Annotations: writes,
+		Run: func(api Doer, a map[string]any) (any, error) {
+			n, err := str(a, "name", true)
+			if err != nil {
+				return nil, err
+			}
+			body := map[string]any{}
+			for _, k := range []string{"options", "len"} {
+				if a[k] != nil {
+					body[k] = a[k]
+				}
+			}
+			var out any
+			return out, api.Do("PUT", "/v1/features/"+url.PathEscape(n)+"/conf", body, &out)
+		}},
 	{Name: "module_set", Title: "Switch a module on or off",
-		Description: "Switch one of keelAuth's modules on or off (Settings → Modules): ways in (ldap, oidc, radius, phone, totp) and feature modules (computers). Switching a feature module off hides its values everywhere but keeps them.",
+		Description: "Switch one of keelAuth's modules on or off (Settings → Modules): ways in (ldap, oidc, radius, phone, totp) and feature modules (computers, employee, names). Switching a feature module off hides its values everywhere but keeps them.",
 		InputSchema: obj(map[string]any{"name": map[string]any{"type": "string"}, "enabled": map[string]any{"type": "boolean"}}, "name", "enabled"),
 		Annotations: sensitive,
 		Run: func(api Doer, a map[string]any) (any, error) {
@@ -181,7 +205,7 @@ var tools = []Tool{
 		}},
 	{Name: "user_set_features", Title: "Set a user's feature attributes",
 		Description: "Replace a user's values of one or more feature modules that are on, e.g. features = {\"computers\": [{\"name\": \"GYOMU90\", \"address\": \"192.168.1.50\", \"port\": 3389}]} " +
-			"(computers: name 1-32 letters, digits, . _ -, unique in the list; address IPv4 or host name; port 1-65535, default 3389). null clears a module; modules not named stay. A bad value changes nothing and says which row and field.",
+			"(computers: name 1-32 letters, digits, . _ -, unique in the list; address IPv4 or host name; port 1-65535, default 3389). Also {\"employee\": {\"employeeNumber\": \"11011\", \"employeeType\": \"regular\"}} (the number: digits, nobody else's, of the length the settings fix, may be left out; the type: a code out of the settings' options) and {\"names\": {\"sn\", \"givenName\", \"phoneticLastName\", \"phoneticFirstName\"}}. null clears a module; modules not named stay. A bad value changes nothing and says which row and field.",
 		InputSchema: obj(map[string]any{"name": nameProp, "features": map[string]any{"type": "object", "description": "module name -> its value (a list of rows, or one object)"}}, "name", "features"),
 		Annotations: writes,
 		Run: func(api Doer, a map[string]any) (any, error) {

@@ -30,9 +30,16 @@ type DeviceOut struct {
 	PasswordAt  string `json:"password_set_at"`
 	BindDN      string `json:"bind_dn"`
 	Password    string `json:"password,omitempty"`
+	// Features: the feature modules whose LDAP attributes it reads (docs/02 §10.4).
+	Features []string `json:"features"`
 	// Missing: keelAuth has it, the engine not (a restored older backup): make a new password
 	// or delete it
 	Missing bool `json:"missing,omitempty"`
+}
+
+func (d *Device) out() DeviceOut {
+	return DeviceOut{Name: d.Name, Description: d.Description, Created: d.Created, PasswordAt: d.PasswordAt, BindDN: DeviceBindDN,
+		Features: append([]string{}, d.Features...)}
 }
 
 func (s *Server) devicesOut() []DeviceOut {
@@ -47,8 +54,9 @@ func (s *Server) devicesOut() []DeviceOut {
 	}
 	out := []DeviceOut{}
 	for _, d := range st.Devices {
-		out = append(out, DeviceOut{Name: d.Name, Description: d.Description, Created: d.Created, PasswordAt: d.PasswordAt,
-			BindDN: DeviceBindDN, Missing: have != nil && !have[d.Name]})
+		o := d.out()
+		o.Missing = have != nil && !have[d.Name]
+		out = append(out, o)
 	}
 	return out
 }
@@ -68,13 +76,18 @@ func (s *Server) getDevices(r *http.Request) (any, error) {
 
 func (s *Server) postDevice(r *http.Request) (any, error) {
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Features    []string `json:"features"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
 	}
 	req.Name, req.Description = strings.TrimSpace(req.Name), strings.TrimSpace(req.Description)
+	feats, err := checkKeyFeatures(req.Features)
+	if err != nil {
+		return nil, err
+	}
 	switch {
 	case !ValidName(req.Name) || reserved(req.Name):
 		return nil, bad("device name %q: lower-case letters, digits, - and _, a letter first, at most 32 (not a name keelAuth or Kanidm uses)", req.Name)
@@ -99,13 +112,56 @@ func (s *Server) postDevice(r *http.Request) (any, error) {
 		return nil, err
 	}
 	now := s.now().Format(time.RFC3339)
-	d := Device{Name: req.Name, Description: req.Description, Created: now, PasswordAt: now}
+	d := Device{Name: req.Name, Description: req.Description, Created: now, PasswordAt: now, Features: feats}
 	if err := s.update(func(st *State) error { st.Devices = append(st.Devices, d); return nil }, false); err != nil {
 		s.Eng.DeleteServiceAccount(req.Name)
 		return nil, err
 	}
 	s.Log.Printf("ldap: device account %s made", req.Name)
-	return DeviceOut{Name: d.Name, Description: d.Description, Created: d.Created, PasswordAt: d.PasswordAt, BindDN: DeviceBindDN, Password: tok}, nil
+	out := d.out()
+	out.Password = tok
+	return out, nil
+}
+
+// patchDevice: PATCH /v1/ldap/devices/{name} {"description", "features"}: what is given changes.
+func (s *Server) patchDevice(r *http.Request) (any, error) {
+	name := r.PathValue("name")
+	var req struct {
+		Description *string   `json:"description"`
+		Features    *[]string `json:"features"`
+	}
+	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	var feats []string
+	if req.Features != nil {
+		var err error
+		if feats, err = checkKeyFeatures(*req.Features); err != nil {
+			return nil, err
+		}
+	}
+	if req.Description != nil {
+		*req.Description = strings.TrimSpace(*req.Description)
+		if len(*req.Description) > 200 {
+			return nil, bad("the description: at most 200 characters")
+		}
+	}
+	var out DeviceOut
+	err := s.update(func(st *State) error {
+		x := st.device(name)
+		if x == nil {
+			return notFound("no device account %q", name)
+		}
+		if req.Description != nil {
+			x.Description = *req.Description
+		}
+		if req.Features != nil {
+			x.Features = feats
+		}
+		out = x.out()
+		return nil
+	}, false)
+	return out, err
 }
 
 // postDevicePassword gives a device account a new token (the old one stops working at once).
@@ -136,7 +192,8 @@ func (s *Server) postDevicePassword(r *http.Request) (any, error) {
 			return notFound("no device account %q", name)
 		}
 		x.PasswordAt = s.now().Format(time.RFC3339)
-		out = DeviceOut{Name: x.Name, Description: x.Description, Created: x.Created, PasswordAt: x.PasswordAt, BindDN: DeviceBindDN, Password: tok}
+		out = x.out()
+		out.Password = tok
 		return nil
 	}, false)
 	return out, err

@@ -5,6 +5,7 @@ import { api, html, rel } from "./api.js";
 import { fmtTime, t } from "./i18n.js";
 import { ask, Dialog, FormDialog, Spinner, toast } from "./ui.js";
 import { namePattern, Shown } from "./users.js";
+import { featText } from "./features.js";
 
 const fail = (e) => toast(e.message, 8000);
 const enc = encodeURIComponent;
@@ -35,14 +36,23 @@ export function Examples({ device, password, onClose }) {
       <button type="button" class="primary" onClick=${onClose}>${t("dlg.done")}</button></div></div><//>`;
 }
 
-function DeviceForm({ onClose, onDone }) {
-  const [f, setF] = useState({ name: "", description: "" });
+// inLDAP: the feature modules that are on and have LDAP attributes (a device may be let read them)
+const inLDAP = (feats) => (feats || []).filter((x) => x.enabled && (x.ldap_class || x.fields.some((fd) => fd.ldap)));
+
+// DeviceForm: a new device account, or (dev given) the description and what it may read of one
+function DeviceForm({ dev, feats, onClose, onDone }) {
+  const [f, setF] = useState({ name: dev ? dev.name : "", description: dev ? dev.description || "" : "", features: dev ? dev.features || [] : [] });
   const set = (k) => (e) => { const v = e.target.value; setF((f) => ({ ...f, [k]: v })); };
-  const save = async () => onDone(await api("POST", "v1/ldap/devices", { name: f.name.trim(), description: f.description.trim() }));
-  return html`<${FormDialog} title=${t("ldap.devnew")} submit=${t("ldap.devadd")} onSubmit=${save} onClose=${onClose}>
-    <p class="muted small">${t("ldap.devfor")}</p>
-    <label>${t("ldap.devname")}<input type="text" required pattern=${namePattern} spellcheck="false" autocapitalize="off" placeholder="printer-2f" value=${f.name} onInput=${set("name")} /></label>
+  const save = async () => onDone(dev ? await api("PATCH", "v1/ldap/devices/" + enc(dev.name), { description: f.description.trim(), features: f.features })
+    : await api("POST", "v1/ldap/devices", { name: f.name.trim(), description: f.description.trim(), features: f.features }));
+  const can = inLDAP(feats);
+  return html`<${FormDialog} title=${dev ? t("users.edit", dev.name) : t("ldap.devnew")} submit=${dev ? t("save") : t("ldap.devadd")} onSubmit=${save} onClose=${onClose}>
+    ${!dev && html`<p class="muted small">${t("ldap.devfor")}</p>
+    <label>${t("ldap.devname")}<input type="text" required pattern=${namePattern} spellcheck="false" autocapitalize="off" placeholder="printer-2f" value=${f.name} onInput=${set("name")} /></label>`}
     <label>${t("ldap.devdesc")}<input type="text" maxlength="200" placeholder=${t("ldap.devdescex")} value=${f.description} onInput=${set("description")} /></label>
+    ${can.length > 0 && html`<p class="muted small">${t("ldap.devfeatures")}</p>${can.map((x) => html`<label class="check"><input type="checkbox" checked=${f.features.includes(x.name)}
+      onChange=${(e) => setF((f) => ({ ...f, features: e.target.checked ? [...f.features, x.name] : f.features.filter((n) => n !== x.name) }))} /> ${featText(x.title)}
+      <span class="muted small mono">${[...x.fields.filter((fd) => fd.ldap).map((fd) => fd.ldap), ...(x.ldap_join || []).map((j) => j.attr)].join(", ")}</span></label>`)}`}
   <//>`;
 }
 
@@ -61,7 +71,8 @@ function LDAP() {
   const [l, setL] = useState(null);
   const [show, setShow] = useState(false);
   const [dlg, setDlg] = useState(null);
-  const load = () => api("GET", "v1/ldap").then(setL).catch(fail);
+  const [feats, setFeats] = useState([]); // the feature modules: which of them a device may read
+  const load = () => { api("GET", "v1/features").then((x) => setFeats(x.features || [])).catch(() => {}); return api("GET", "v1/ldap").then(setL).catch(fail); };
   useEffect(() => { load(); }, []);
   if (!l) return html`<${Spinner} />`;
   const close = () => setDlg(null);
@@ -88,8 +99,9 @@ function LDAP() {
     ${devs.length > 0 && html`<div class="table-wrap tall"><table class="data plain">
       <thead><tr><th>${t("ldap.devname")}</th><th>${t("ldap.devdesc")}</th><th>${t("ldap.devpwat")}</th><th></th></tr></thead>
       <tbody>${devs.map((d) => html`<tr><td><b>${d.name}</b>${d.missing ? html` <span class="badge" title=${t("ldap.devmissing")}>${t("ldap.devmissingb")}</span>` : ""}</td>
-        <td>${d.description || "–"}</td><td>${fmtTime(d.password_set_at)}</td>
-        <td class="nowrap"><button class="btn" onClick=${() => setDlg({ kind: "examples", dev: d.name })}>${t("ldap.examples")}</button>
+        <td>${d.description || "–"}${(d.features || []).map((n) => { const x = feats.find((y) => y.name === n); return html` <span class="badge">${x ? featText(x.title) : n}</span>`; })}</td><td>${fmtTime(d.password_set_at)}</td>
+        <td class="nowrap"><button class="btn" onClick=${() => setDlg({ kind: "edit", dev: d })}>${t("edit")}</button>
+          <button class="btn" onClick=${() => setDlg({ kind: "examples", dev: d.name })}>${t("ldap.examples")}</button>
           <button class="btn" onClick=${() => newpw(d)}>${t("ldap.devnewpw")}</button>
           <button class="btn danger" onClick=${() => del(d)}>${t("delete")}</button></td></tr>`)}</tbody></table></div>`}
     <h3 class="sub">${t("acc.fill")}</h3>
@@ -115,7 +127,8 @@ function LDAP() {
         [t("ldap.bindpw"), show ? html`<${Val} v=${l.bind_password} />` : html`<span class="mono">••••••••</span> <button type="button" class="copy" onClick=${() => setShow(true)}>${t("show")}</button>`, true],
       ]} />
       <div class="actions"><button class="btn" onClick=${reset}>${t("ldap.reset")}</button></div></details>
-    ${dlg && dlg.kind === "new" && html`<${DeviceForm} onClose=${close} onDone=${(x) => { load(); setTimeout(() => setDlg({ kind: "shown", dev: x })); }} />`}
+    ${dlg && dlg.kind === "edit" && html`<${DeviceForm} dev=${dlg.dev} feats=${feats} onClose=${close} onDone=${load} />`}
+    ${dlg && dlg.kind === "new" && html`<${DeviceForm} feats=${feats} onClose=${close} onDone=${(x) => { load(); setTimeout(() => setDlg({ kind: "shown", dev: x })); }} />`}
     ${dlg && dlg.kind === "shown" && html`<${DeviceShown} dev=${dlg.dev} onClose=${close} onExamples=${() => setDlg({ kind: "examples", dev: dlg.dev.name, password: dlg.dev.password })} />`}
     ${dlg && dlg.kind === "examples" && html`<${Examples} device=${dlg.dev} password=${dlg.password} onClose=${close} />`}
   </div>`;

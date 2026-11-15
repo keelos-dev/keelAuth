@@ -10,7 +10,7 @@ named by their short lower-case name. Errors come back as text that starts with 
 - user_add
 - user_disable, user_enable
 - user_reset_password
-- module_set, feature_list, user_set_features
+- module_set, feature_list, feature_configure, user_set_features
 - group_list, group_add, group_members
 - service_list, service_group
 - oidc_list, oidc_create
@@ -119,6 +119,20 @@ replaces anna's list (port defaults to 3389; `null` clears it). Answer:
 ```
 
 A bad row is refused as a whole, e.g. `error: computers row 1: address: not an IPv4 address or host name`.
+
+Two more modules hold who a person is in the company: `employee` (`employeeNumber`: digits, nobody
+else's, may be left out; `employeeType`: a code out of the options the administrator keeps) and
+`names` (`sn`, `givenName`, `phoneticLastName`, `phoneticFirstName`). The options and the number's
+length are the module's settings:
+
+`feature_configure {"name": "employee", "len": {"employeeNumber": 5}, "options": {"employeeType": [{"code": "regular", "title": {"en": "Regular", "ja": "正社員"}}, {"code": "external", "title": {"en": "External"}}]}}`
+
+`user_set_features {"name": "anna", "features": {"employee": {"employeeNumber": "11011", "employeeType": "regular"}}}`
+replaces anna's employee values as a whole (leave the number out and it is cleared). A number someone
+else has is refused: `error: employee: employeeNumber: 11011 is already bert's`. An option accounts
+still have cannot be removed from the settings.
+
+`user_list {"q": "11011"}` finds people by number, name or reading.
 
 ## group_list, group_add, group_members
 

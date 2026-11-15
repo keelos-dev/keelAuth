@@ -113,6 +113,8 @@ type State struct {
 	// Modules: the optional parts switched on or off by the admin (modules.go); absent = the
 	// module's default.
 	Modules map[string]bool `json:"modules,omitempty"`
+	// FeatureConf: the admin's settings of the feature modules (features.go), by module name.
+	FeatureConf map[string]*FeatureConf `json:"feature_conf,omitempty"`
 	// Phones: the phones enrolled for logging in (phonemod.go, module phone).
 	Phones   []phone.Device        `json:"phones,omitempty"`
 	LDAPPort int                   `json:"ldap_port"`
@@ -161,6 +163,8 @@ type Device struct {
 	Description string `json:"description,omitempty"`
 	Created     string `json:"created"`
 	PasswordAt  string `json:"password_set_at"`
+	// Features: the feature modules whose LDAP attributes this device reads; none by default.
+	Features []string `json:"features,omitempty"`
 }
 
 // OIDCRoles is one application's group meanings.
@@ -229,6 +233,15 @@ func (s *State) Clone() *State {
 	}
 	c.APIKeys = slices.Clone(s.APIKeys)
 	c.Devices = slices.Clone(s.Devices)
+	for i := range c.Devices {
+		c.Devices[i].Features = slices.Clone(s.Devices[i].Features)
+	}
+	if s.FeatureConf != nil {
+		c.FeatureConf = map[string]*FeatureConf{}
+		for k, v := range s.FeatureConf {
+			c.FeatureConf[k] = v.clone()
+		}
+	}
 	if s.OIDCRoles != nil {
 		c.OIDCRoles = map[string]OIDCRoles{}
 		for k, v := range s.OIDCRoles {

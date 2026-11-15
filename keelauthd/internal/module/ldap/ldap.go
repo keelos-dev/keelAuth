@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,22 @@ type Directory interface {
 	CheckPassword(name, password string) bool
 	// CheckToken: the device account whose current token this is (a "dn=token" bind).
 	CheckToken(token string) (device string, ok bool)
+	// Reads: the feature modules (Person.Extra) a device account's bind sees.
+	Reads(device string) []string
+}
+
+// Attr is one more attribute of a person.
+type Attr struct {
+	Name   string
+	Values []string
+}
+
+// Extra is what a feature module adds to a person's entry: object classes and attributes. Only
+// a device account that reads the module (Dir.Reads) sees them, or can filter by them.
+type Extra struct {
+	Module  string
+	Classes []string
+	Attrs   []Attr
 }
 
 // Person is a user as the directory shows it.
@@ -35,6 +52,7 @@ type Person struct {
 	UID         int
 	UUID        string
 	Groups      []string // the groups it is in (direct and through nested groups)
+	Extra       []Extra  // by feature module
 }
 
 // Group is a group as the directory shows it.
@@ -372,7 +390,11 @@ func (cn *conn) search(id int, op elem) bool {
 		limit = sizeLimit
 	}
 	n := 0
-	for _, e := range cn.s.entries() {
+	var reads []string
+	if dev, ok := strings.CutPrefix(cn.bound, "device:"); ok {
+		reads = cn.s.Dir.Reads(dev)
+	}
+	for _, e := range cn.s.entries(reads) {
 		if !inScope(e.dn, base, baseDN, scope) || !f.match(e) {
 			continue
 		}
@@ -466,8 +488,9 @@ func (e *entry) encode(attrs []string, typesOnly bool) []byte {
 	return join(encStr(e.shown), encSeq(list))
 }
 
-// entries is the whole tree as of now: the root DSE, the base, every person, every group.
-func (s *Server) entries() []*entry {
+// entries is the whole tree as of now: the root DSE, the base, every person, every group; of
+// the feature modules' attributes those of reads.
+func (s *Server) entries(reads []string) []*entry {
 	base := s.Dir.BaseDN()
 	domain := s.Dir.Domain()
 	root := newEntry("")
@@ -519,6 +542,20 @@ func (s *Server) entries() []*entry {
 		if p.UUID != "" {
 			e.add("entryuuid", p.UUID)
 			e.add("uuid", p.UUID)
+		}
+		for _, x := range p.Extra {
+			if !slices.Contains(reads, x.Module) {
+				continue
+			}
+			for _, c := range x.Classes {
+				if !slices.ContainsFunc(e.attrs["objectclass"], func(v string) bool { return strings.EqualFold(v, c) }) {
+					e.add("objectclass", c)
+					e.add("class", c)
+				}
+			}
+			for _, a := range x.Attrs {
+				e.add(a.Name, a.Values...)
+			}
 		}
 		out = append(out, e)
 	}

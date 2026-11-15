@@ -140,6 +140,7 @@ function General() {
 function Modules() {
   const [d, setD] = useState(null);
   const [fs, setFs] = useState([]); // the feature modules' declarations (features.go)
+  const [conf, setConf] = useState(null); // the feature module whose settings dialog is open
   const load = () => Promise.all([api("GET", "v1/modules"), api("GET", "v1/features").catch(() => ({}))])
     .then(([x, f]) => { setD(x.modules); setFs(f.features || []); }).catch(fail);
   useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, []);
@@ -171,10 +172,38 @@ function Modules() {
       ${feats.map((m) => { const f = fs.find((x) => x.name === m.name) || { users_with_data: 0 };
         return html`<tr key=${m.name}><td>${label(m)}</td><td class="muted">${featText(f.help)}</td><td>${f.users_with_data}</td>
         <td>${m.enabled ? html`<span class="badge ok">${t("mod.on")}</span>` : html`<span class="muted">${t("mod.off")}</span>`}</td>
-        <td class="actions"><button class="btn" onClick=${() => flip(m)}>${m.enabled ? t("mod.disable") : t("mod.enable")}</button>
+        <td class="actions">${f.conf && html`<button class="btn" onClick=${() => setConf(f)}>${t("mod.conf")}</button> `}<button class="btn" onClick=${() => flip(m)}>${m.enabled ? t("mod.disable") : t("mod.enable")}</button>
           ${!m.enabled && f.users_with_data > 0 && html` <button class="btn danger" onClick=${() => wipe(f)}>${t("mod.deldata")}</button>`}</td></tr>`; })}
     </tbody></table>`}
+    ${conf && html`<${FeatureConf} f=${conf} onClose=${() => setConf(null)} onDone=${load} />`}
   </div>`;
+}
+
+// FeatureConf: a feature module's settings (PUT v1/features/{name}/conf): the fixed length of its
+// admin_len fields and the options of its choice fields. Emptied inputs stay empty (= any length).
+function FeatureConf({ f, onClose, onDone }) {
+  const [len, setLen] = useState(() => Object.fromEntries(Object.entries(f.conf.len || {}).map(([k, v]) => [k, v ? String(v) : ""])));
+  const [opts, setOpts] = useState(() => JSON.parse(JSON.stringify(f.conf.options || {})));
+  const langs = [["zh", "中文"], ["en", "English"], ["ja", "日本語"]];
+  const setOpt = (name, i, up) => setOpts((o) => ({ ...o, [name]: o[name].map((x, j) => (j === i ? up(x) : x)) }));
+  const save = async () => {
+    const body = { len: Object.fromEntries(Object.entries(len).map(([k, v]) => [k, v === "" ? 0 : Number(v)])),
+      options: Object.fromEntries(Object.entries(opts).map(([k, v]) => [k, v.map((o) => ({ code: o.code.trim(), title: o.title || {} }))])) };
+    await api("PUT", "v1/features/" + f.name + "/conf", body); onDone();
+  };
+  return html`<${FormDialog} title=${t("featconf.title", featText(f.title))} submit=${t("save")} onSubmit=${save} onClose=${onClose}>
+    ${f.fields.filter((fd) => fd.admin_len).map((fd) => html`<label>${t("featconf.len", featText(fd.title))}
+      <input type="number" min="1" max=${fd.max || undefined} placeholder=${t("featconf.anylen")} value=${len[fd.name] ?? ""} onInput=${(e) => setLen((l) => ({ ...l, [fd.name]: e.target.value }))} />
+      <span class="muted small">${t("featconf.lenhint")}</span></label>`)}
+    ${f.fields.filter((fd) => fd.type === "choice").map((fd) => { const v = opts[fd.name] || [];
+      return html`<fieldset class="hn-g feat"><legend>${t("featconf.options", featText(fd.title))}</legend><p class="muted small">${t("featconf.codehint")}</p>
+        ${v.length ? html`<table class="data plain feat-rows"><thead><tr><th>${t("featconf.code")}</th>${langs.map(([, n]) => html`<th>${n}</th>`)}<th></th></tr></thead>
+          <tbody>${v.map((o, i) => html`<tr><td><input type="text" required pattern="[a-z][a-z0-9_\\-]{0,31}" spellcheck="false" autocapitalize="off" value=${o.code} onInput=${(e) => setOpt(fd.name, i, (x) => ({ ...x, code: e.target.value }))} /></td>
+            ${langs.map(([l]) => html`<td><input type="text" maxlength="64" value=${(o.title || {})[l] || ""} onInput=${(e) => setOpt(fd.name, i, (x) => ({ ...x, title: { ...(x.title || {}), [l]: e.target.value } }))} /></td>`)}
+            <td><button type="button" class="btn" onClick=${() => setOpts((c) => ({ ...c, [fd.name]: v.filter((_, j) => j !== i) }))}>${t("feat.remove")}</button></td></tr>`)}</tbody></table>`
+          : html`<p class="muted small">${t("featconf.noopts")}</p>`}
+        <button type="button" class="btn" onClick=${() => setOpts((c) => ({ ...c, [fd.name]: [...v, { code: "", title: {} }] }))}>${t("featconf.addopt")}</button></fieldset>`; })}
+  <//>`;
 }
 
 // NewToken: scopes given = an API key, with its scope (api.scope.<name> says what each allows)

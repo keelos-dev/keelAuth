@@ -164,7 +164,7 @@ func (s *Server) putModule(r *http.Request) (any, error) {
 		}
 		st.Modules[name] = *req.Enabled
 		return nil
-	}, d.Feature); err != nil {
+	}, d.Feature || name == "phone"); err != nil {
 		return nil, err
 	}
 	state := "off"

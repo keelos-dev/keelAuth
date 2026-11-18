@@ -30,6 +30,19 @@ type SyncUser struct {
 	TOTPSetAt string `json:"totp_set_at"`
 	// Features: the feature modules this sync key reads (features.go), when on.
 	Features map[string]any `json:"features,omitempty"`
+	// Phones: the account's enrolled phones, for a sync key made with phones (docs/04 §8):
+	// always a list then ([] = none, or the phone module is off), absent for other keys.
+	Phones *[]SyncPhone `json:"phones,omitempty"`
+}
+
+// SyncPhone is an enrolled phone as another system needs it to check a signature: the public
+// key (base64url of the 65-byte uncompressed P-256 point), never anything secret.
+type SyncPhone struct {
+	ID       string `json:"id"`
+	Key      string `json:"key"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Created  string `json:"created"`
 }
 
 type SyncGroup struct {
@@ -59,6 +72,14 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 	// a key made without secrets is told who the accounts are, never their hashes
 	key := s.syncKeyOf(caller(r))
 	secrets := key == nil || !key.NoSecrets
+	// a key made with phones is given their public keys (nothing while the module is off)
+	phones := key != nil && key.Phones
+	byUser := map[string][]SyncPhone{}
+	if phones && s.moduleOn("phone") {
+		for _, d := range st.Phones {
+			byUser[d.User] = append(byUser[d.User], SyncPhone{ID: d.ID, Key: d.Key, Name: d.Name, Platform: d.Platform, Created: d.Created})
+		}
+	}
 	for _, u := range us {
 		if u.Name == BindAccount || (consumer != "" && !ac.allowed(u.Name, consumer)) {
 			continue
@@ -72,6 +93,13 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 		}
 		if su.Groups == nil {
 			su.Groups = []string{}
+		}
+		if phones {
+			l := byUser[u.Name]
+			if l == nil {
+				l = []SyncPhone{}
+			}
+			su.Phones = &l
 		}
 		if d := st.Users[u.Name]; d != nil {
 			nt, err := s.box.Open(d.NT)
@@ -90,5 +118,10 @@ func (s *Server) getSyncAccounts(r *http.Request) (any, error) {
 		g := groupOut(&gs[i])
 		groups = append(groups, SyncGroup{Name: g.Name, GID: g.GID, Members: g.Members})
 	}
-	return map[string]any{"revision": st.Revision, "domain": st.Domain, "users": users, "groups": groups, "mail_domains": mailDomainsOf(st), "secrets": secrets}, nil
+	out := map[string]any{"revision": st.Revision, "domain": st.Domain, "users": users, "groups": groups, "mail_domains": mailDomainsOf(st), "secrets": secrets}
+	if phones {
+		// phone_origin: the first line after the prefix of what the phones sign (phone.RPMessage)
+		out["phones"], out["phone_origin"] = true, s.Origin()
+	}
+	return out, nil
 }

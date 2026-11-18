@@ -95,6 +95,9 @@ type Token struct {
 	SelfService bool `json:"self_service,omitempty"`
 	// Features: the feature modules this sync key reads (features.go); none by default.
 	Features []string `json:"features,omitempty"`
+	// Phones: a sync key that is given the enrolled phones' public keys, for a system that
+	// checks a phone's signature itself (sync.go, docs/04 §8); not by default.
+	Phones bool `json:"phones,omitempty"`
 }
 
 // State is keelauthd's own data. Accounts themselves are in the engine.
@@ -136,6 +139,11 @@ type State struct {
 	Revision      int64   `json:"revision"`
 	BackupKeep    int     `json:"backup_keep"`
 	LastBackup    string  `json:"last_backup,omitempty"`
+	// SnapHourly / SnapDaily: how many ZFS snapshots of the data disk to keep (pull.go; nil =
+	// the defaults 24 / 30). Pull: the backup machine's token and last fetch.
+	SnapHourly *int      `json:"snap_hourly,omitempty"`
+	SnapDaily  *int      `json:"snap_daily,omitempty"`
+	Pull       PullState `json:"pull,omitzero"`
 	// Timezone: what the page shows times in when keelAuth runs standalone (keel's own zone
 	// otherwise, keelOS docs/47); "" = UTC.
 	Timezone string `json:"timezone,omitempty"`
@@ -230,6 +238,7 @@ func (s *State) Clone() *State {
 		c.Groups[k] = &g
 	}
 	c.ServiceGroups = maps.Clone(s.ServiceGroups)
+	c.Pull.Allow = slices.Clone(s.Pull.Allow)
 	c.Modules = maps.Clone(s.Modules)
 	c.Phones = slices.Clone(s.Phones)
 	c.Radius.Clients = slices.Clone(s.Radius.Clients)

@@ -76,6 +76,9 @@ func (s *Server) Alerts() []Alert {
 	} else if s.now().Sub(last) > 48*time.Hour {
 		out = append(out, Alert{"old_backup", "warning", "", "the last backup is from " + st.LastBackup})
 	}
+	if a := s.pullAlert(); a != nil {
+		out = append(out, *a)
+	}
 	return out
 }
 

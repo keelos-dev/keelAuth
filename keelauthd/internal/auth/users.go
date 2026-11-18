@@ -517,6 +517,7 @@ func (s *Server) postUserPassword(r *http.Request) (any, error) {
 	if err := s.setPassword(name, pw, must); err != nil {
 		return nil, err
 	}
+	s.dropPhones(name, "password reset by "+caller(r).Name)
 	return map[string]any{"password": made, "must_change": must}, nil
 }
 
@@ -535,6 +536,7 @@ func (s *Server) deleteUser(r *http.Request) (any, error) {
 	if err := s.update(func(st *State) error { delete(st.Users, name); return nil }, true); err != nil {
 		return nil, err
 	}
+	s.dropPhones(name, "account deleted")
 	s.radiusLater()
 	return map[string]any{}, nil
 }

@@ -223,11 +223,11 @@ function NewToken({ title, onClose, onDone, path, scopes }) {
 // NewSyncKey: a sync key with whose accounts it is given (its group), whether it gets their
 // password hashes, and whether a login through it needs the authenticator app's code.
 function NewSyncKey({ onClose, onDone }) {
-  const [f, setF] = useState({ name: "", group: "", all: false, secrets: true, require_totp: false, self_service: false, features: [] });
+  const [f, setF] = useState({ name: "", group: "", all: false, secrets: true, require_totp: false, self_service: false, phones: false, features: [] });
   const [feats, setFeats] = useState([]);
   useEffect(() => { api("GET", "v1/features").then((x) => setFeats((x.features || []).filter((y) => y.enabled))).catch(() => {}); }, []);
   const set = (k) => (e) => { const v = e.target.type === "checkbox" ? e.target.checked : e.target.value; setF((f) => ({ ...f, [k]: v })); };
-  const save = async () => onDone(await api("POST", "v1/sync/keys", { name: f.name.trim(), group: f.all ? "" : f.group.trim(), all: f.all, secrets: f.secrets, require_totp: f.require_totp, self_service: f.self_service, features: f.features }));
+  const save = async () => onDone(await api("POST", "v1/sync/keys", { name: f.name.trim(), group: f.all ? "" : f.group.trim(), all: f.all, secrets: f.secrets, require_totp: f.require_totp, self_service: f.self_service, phones: f.phones, features: f.features }));
   return html`<${FormDialog} title=${t("sync.new")} submit=${t("tok.make")} onSubmit=${save} onClose=${onClose}>
     <label>${t("tok.name")}<input type="text" required maxlength="64" value=${f.name} onInput=${set("name")} />
       <span class="muted small">${t("tok.namehint")}</span></label>
@@ -237,6 +237,7 @@ function NewSyncKey({ onClose, onDone }) {
     <label class="check"><input type="checkbox" checked=${f.secrets} onChange=${set("secrets")} /> ${t("sync.secrets")}</label>
     <label class="check"><input type="checkbox" checked=${f.require_totp} onChange=${set("require_totp")} /> ${t("sync.totp")}</label>
     <label class="check"><input type="checkbox" checked=${f.self_service} onChange=${set("self_service")} /> ${t("sync.self")}</label>
+    <label class="check"><input type="checkbox" checked=${f.phones} onChange=${set("phones")} /> ${t("sync.phones")}</label>
     ${feats.length > 0 && html`<p class="muted small">${t("sync.features")}</p>${feats.map((x) => html`<label class="check"><input type="checkbox" checked=${f.features.includes(x.name)}
       onChange=${(e) => setF((f) => ({ ...f, features: e.target.checked ? [...f.features, x.name] : f.features.filter((n) => n !== x.name) }))} /> ${featText(x.title)}</label>`)}`}
   <//>`;
@@ -316,7 +317,7 @@ function Sync() {
   };
   return html`<div class="card"><div class="row-head"><h3>${t("sync.title")}</h3><button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("sync.new")}</button></div>
     <p class="ka-for">${t("sync.for")}</p>
-    <${TokenList} list=${d.keys} onDelete=${del} extra=${(x) => html`${x.group ? html` <span class="badge">${x.group}</span>` : x.all ? html` <span class="badge open">${t("svc.open")}</span>` : ""}${x.secrets === false ? html` <span class="badge">${t("sync.nosecrets")}</span>` : ""}${x.require_totp ? html` <span class="badge">${t("sync.totpbadge")}</span>` : ""}${x.self_service ? html` <span class="badge">${t("sync.selfbadge")}</span>` : ""}${(x.features || []).map((n) => html` <span class="badge">${n}</span>`)}`} />
+    <${TokenList} list=${d.keys} onDelete=${del} extra=${(x) => html`${x.group ? html` <span class="badge">${x.group}</span>` : x.all ? html` <span class="badge open">${t("svc.open")}</span>` : ""}${x.secrets === false ? html` <span class="badge">${t("sync.nosecrets")}</span>` : ""}${x.require_totp ? html` <span class="badge">${t("sync.totpbadge")}</span>` : ""}${x.self_service ? html` <span class="badge">${t("sync.selfbadge")}</span>` : ""}${x.phones ? html` <span class="badge">${t("sync.phonesbadge")}</span>` : ""}${(x.features || []).map((n) => html` <span class="badge">${n}</span>`)}`} />
     ${dlg && dlg.kind === "new" && html`<${NewSyncKey} onClose=${() => setDlg(null)}
       onDone=${(x) => { load(); setTimeout(() => setDlg({ kind: "shown", x })); }} />`}
     ${dlg && dlg.kind === "shown" && html`<${Shown} title=${t("ai.made", dlg.x.name)} onClose=${() => setDlg(null)} rows=${[[t("sync.key"), dlg.x.key]]} />`}

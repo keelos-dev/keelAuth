@@ -190,7 +190,7 @@ func (s *Server) Serve(socket string) error {
 		go s.serveTCP(st.Listen, s.internalOnly(h), nil)
 	}
 	if st.HTTPSListen != "" {
-		go s.serveTCP(st.HTTPSListen, h, &tls.Config{GetCertificate: s.serverCert, MinVersion: tls.VersionTLS12})
+		go s.serveTCP(st.HTTPSListen, h, &tls.Config{GetCertificate: s.webCert, MinVersion: tls.VersionTLS12})
 		// http://<address>/ typed into a browser lands on the page too (keel does the same)
 		go s.serveKind(DefaultHTTP, redirectHandler(st.HTTPSListen), nil, "HTTP, redirects to HTTPS")
 	}
@@ -199,6 +199,9 @@ func (s *Server) Serve(socket string) error {
 			go s.serveLDAP(st.LDAPPort) // the ldap module (ldapmod.go); Kanidm serves LDAP itself otherwise
 		}
 		go s.serveOIDC(KanidmPort) // the oidc module (oidcmod.go) on the origin's port
+	}
+	if s.Real {
+		go s.SnapLoop() // the data disk's snapshots (pull.go)
 	}
 	go func() {
 		<-s.unlockedCh // a locked master key: nothing works until it is given (POST /unlock)

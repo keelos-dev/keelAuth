@@ -802,3 +802,174 @@ func TestTOTPLogin(t *testing.T) {
 		t.Fatalf("enrol with the module off: %d", code)
 	}
 }
+
+// enrolPhone enrols a new phone for the user (an administrator starts it) and returns its
+// key and device id.
+func enrolPhone(t *testing.T, r *rig, user string) (*ecdsa.PrivateKey, string) {
+	t.Helper()
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	e := r.ok("POST", "/v1/phones/enroll", map[string]any{"user": user})
+	u, _ := url.Parse(e["url"].(string))
+	code := u.Query().Get("c")
+	c, out, _ := r.call("POST", "/phone/enroll", "none", map[string]any{"code": code, "name": user + "'s phone", "platform": "ios",
+		"key": phone.EncodeKey(&priv.PublicKey), "sig": phone.Sign(priv, "keelauth-enroll\n"+r.s.Origin()+"\n"+code)})
+	if c != 200 {
+		t.Fatalf("enrol %s: %d %v", user, c, out)
+	}
+	return priv, out["device"].(string)
+}
+
+// TestSyncPhones: a sync key made with phones is given the enrolled phones' public keys
+// (docs/04 §8) and can check a signature made for its own system with them; other keys are
+// not; every change of the phones raises the revision; an administrator's reset of the
+// password or the authenticator, and deleting the account, take the person's phones away,
+// the person's own password change does not.
+func TestSyncPhones(t *testing.T) {
+	r, _ := newNativeRig(t)
+	r.ok("POST", "/v1/users", map[string]any{"name": "alice", "password": "orange-kettle-7"})
+	r.ok("POST", "/v1/users", map[string]any{"name": "bob", "password": "purple-ladder-3"})
+	if code, _, _ := r.call("POST", "/v1/api/keys", "", map[string]any{"name": "x", "scope": "admin", "phones": true}); code != 400 {
+		t.Fatalf("phones on an API key: %d", code)
+	}
+	mk := r.ok("POST", "/v1/sync/keys", map[string]any{"name": "mail1", "all": true, "phones": true})
+	if mk["phones"] != true {
+		t.Fatalf("new key: %v", mk)
+	}
+	mail := "Bearer " + mk["key"].(string)
+	nas := "Bearer " + r.ok("POST", "/v1/sync/keys", map[string]any{"name": "files1", "all": true})["key"].(string)
+	listed := false
+	for _, l := range r.ok("GET", "/v1/sync/keys", nil)["keys"].([]any) {
+		if k := l.(map[string]any); k["name"] == "mail1" {
+			listed = k["phones"] == true
+		} else if k["phones"] != nil {
+			t.Fatalf("key without phones: %v", k)
+		}
+	}
+	if !listed {
+		t.Fatal("GET /v1/sync/keys: no phones on mail1")
+	}
+	sync := func(auth string) (map[string]any, map[string]any) {
+		t.Helper()
+		c, out, _ := r.call("GET", "/v1/sync/accounts", auth, nil)
+		if c != 200 {
+			t.Fatalf("sync: %d %v", c, out)
+		}
+		users := map[string]any{}
+		for _, u := range out["users"].([]any) {
+			users[u.(map[string]any)["name"].(string)] = u
+		}
+		return out, users
+	}
+	phonesOf := func(users map[string]any, name string) []any {
+		t.Helper()
+		l, ok := users[name].(map[string]any)["phones"].([]any)
+		if !ok {
+			t.Fatalf("%s: no phones list: %v", name, users[name])
+		}
+		return l
+	}
+	rev := func() float64 { out, _ := sync(mail); return out["revision"].(float64) }
+
+	// the module is off: the list is there and empty
+	out, users := sync(mail)
+	if out["phones"] != true || out["phone_origin"] != r.s.Origin() || len(phonesOf(users, "alice")) != 0 {
+		t.Fatalf("module off: %v", out)
+	}
+	before := rev()
+	r.ok("PUT", "/v1/modules/phone", map[string]any{"enabled": true})
+	if rev() == before {
+		t.Fatal("switching the module on did not raise the revision")
+	}
+	before = rev()
+	priv, dev := enrolPhone(t, r, "alice")
+	if rev() == before {
+		t.Fatal("enrolling a phone did not raise the revision")
+	}
+	out, users = sync(mail)
+	ps := phonesOf(users, "alice")
+	if len(ps) != 1 || len(phonesOf(users, "bob")) != 0 {
+		t.Fatalf("phones: alice %v bob %v", ps, users["bob"])
+	}
+	p := ps[0].(map[string]any)
+	if p["id"] != dev || p["key"] != phone.EncodeKey(&priv.PublicKey) || p["name"] != "alice's phone" || p["platform"] != "ios" || p["created"] == "" || p["user"] != nil || p["last_used"] != nil {
+		t.Fatalf("phone: %v", p)
+	}
+	// the mail server checks a signature made for it with what it was given
+	origin := out["phone_origin"].(string)
+	sig := phone.Sign(priv, phone.RPMessage(origin, "mail.example.com", "c1", "n1"))
+	if err := phone.Verify(p["key"].(string), phone.RPMessage(origin, "mail.example.com", "c1", "n1"), sig); err != nil {
+		t.Fatal(err)
+	}
+	// … and that signature is no login at keelauthd
+	ch := r.ok("POST", "/login/phone", nil)
+	id := ch["id"].(string)
+	if c, _, _ := r.call("POST", "/phone/approve", "none", map[string]any{"c": id, "n": challengeNonce(r.s, id), "device": dev,
+		"sig": phone.Sign(priv, phone.RPMessage(origin, "mail.example.com", id, challengeNonce(r.s, id)))}); c == 200 {
+		t.Fatal("a signature for another system approved a login here")
+	}
+	// a key without phones, and keel's own, are told nothing about them
+	for _, auth := range []string{nas, ""} {
+		out, users := sync(auth)
+		if out["phones"] != nil || out["phone_origin"] != nil || users["alice"].(map[string]any)["phones"] != nil {
+			t.Fatalf("key without phones (%q): %v", auth, users["alice"])
+		}
+	}
+	// touching a phone (a login) is no change for the sync
+	before = rev()
+	ch = r.ok("POST", "/login/phone", nil)
+	id = ch["id"].(string)
+	n := challengeNonce(r.s, id)
+	r.ok("POST", "/phone/approve", map[string]any{"c": id, "n": n, "device": dev, "sig": phone.Sign(priv, "keelauth-login\n"+r.s.Origin()+"\n"+id+"\n"+n)})
+	if rev() != before {
+		t.Fatal("a login raised the revision")
+	}
+
+	// alice changes her own password: the phone stays
+	if err := r.s.setPassword("alice", "green-window-12", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, users = sync(mail); len(phonesOf(users, "alice")) != 1 {
+		t.Fatal("her own password change took the phone away")
+	}
+	// an administrator resets it: the phone goes, bob's stays
+	_, bobDev := enrolPhone(t, r, "bob")
+	r.ok("POST", "/v1/users/alice/password", nil)
+	_, users = sync(mail)
+	if len(phonesOf(users, "alice")) != 0 || len(phonesOf(users, "bob")) != 1 {
+		t.Fatalf("after the reset: alice %v bob %v", users["alice"], users["bob"])
+	}
+	ch = r.ok("POST", "/login/phone", nil)
+	id = ch["id"].(string)
+	n = challengeNonce(r.s, id)
+	if c, _, _ := r.call("POST", "/phone/approve", "none", map[string]any{"c": id, "n": n, "device": dev, "sig": phone.Sign(priv, "keelauth-login\n"+r.s.Origin()+"\n"+id+"\n"+n)}); c == 200 {
+		t.Fatal("a phone dropped by the reset still logs in")
+	}
+	// removing one phone raises the revision
+	before = rev()
+	r.ok("DELETE", "/v1/phones/"+bobDev, nil)
+	if rev() == before {
+		t.Fatal("removing a phone did not raise the revision")
+	}
+	// the authenticator taken away by an administrator: the phones go too
+	enrolPhone(t, r, "bob")
+	r.ok("PUT", "/v1/modules/totp", map[string]any{"enabled": true})
+	r.ok("DELETE", "/v1/totp?user=bob", nil)
+	if _, users = sync(mail); len(phonesOf(users, "bob")) != 0 {
+		t.Fatal("removing bob's authenticator left his phone")
+	}
+	// a deleted account leaves no phone behind
+	enrolPhone(t, r, "bob")
+	r.ok("DELETE", "/v1/users/bob", nil)
+	for _, d := range r.s.State().Phones {
+		if d.User == "bob" {
+			t.Fatal("bob is gone, his phone is not")
+		}
+	}
+	// the module off again: the lists are empty, and the sync is told so
+	enrolPhone(t, r, "alice")
+	before = rev()
+	r.ok("PUT", "/v1/modules/phone", map[string]any{"enabled": false})
+	if _, users = sync(mail); len(phonesOf(users, "alice")) != 0 || rev() == before {
+		t.Fatal("module off: phones still given, or the revision stayed")
+	}
+}

@@ -298,6 +298,8 @@ table.vdevs td.vact .btn + .btn { margin-left: 4px; }
 .hn-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 10px 24px; align-items: start; }
 .hn-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 fieldset.hn-g { border: 1px solid var(--line); margin: 0; padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 12px; max-height: 50vh; overflow-y: auto; }
+form.stack .mgrid label.check { margin-right: 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
 fieldset.hn-g legend { padding: 0 6px; font-weight: 600; font-size: 12.5px; }
 form.hn-form input[type=text], form.hn-form select { width: 100%; max-width: 420px; }
 /* the time zone picker (tzpick.js): the world with a dot per zone */

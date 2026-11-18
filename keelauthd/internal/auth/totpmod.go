@@ -186,6 +186,9 @@ func (s *Server) deleteTOTP(r *http.Request) (any, error) {
 		return nil, err
 	}
 	s.Log.Printf("totp: code of %s removed by %s", user, caller(r).Name)
+	if user != caller(r).Name {
+		s.dropPhones(user, "authenticator removed by "+caller(r).Name)
+	}
 	return map[string]any{"ok": true}, nil
 }
 

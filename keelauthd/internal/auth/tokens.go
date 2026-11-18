@@ -59,6 +59,7 @@ type TokenOut struct {
 	RequireTOTP bool     `json:"require_totp,omitempty"`
 	SelfService bool     `json:"self_service,omitempty"`
 	Features    []string `json:"features,omitempty"`
+	Phones      bool     `json:"phones,omitempty"`
 }
 
 func tokensOut(ts []Token) []TokenOut {
@@ -78,7 +79,7 @@ func syncKeysOut(st *State) []TokenOut {
 		if out[i].Group == everyAccount {
 			out[i].Group, out[i].All = "", true
 		}
-		out[i].Features = k.Features
+		out[i].Features, out[i].Phones = k.Features, k.Phones
 	}
 	return out
 }
@@ -131,6 +132,7 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 		RequireTOTP bool     `json:"require_totp"`
 		SelfService bool     `json:"self_service"`
 		Features    []string `json:"features"`
+		Phones      bool     `json:"phones"`
 	}
 	if err := decode(r, &req); err != nil {
 		return nil, err
@@ -139,8 +141,8 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 	if req.All && req.Group != "" {
 		return nil, bad("a group or all, not both")
 	}
-	if kind != kindSync && (req.All || req.Group != "" || req.Secrets != nil || req.RequireTOTP || req.SelfService || len(req.Features) > 0) {
-		return nil, bad("group, secrets, require_totp, self_service and features are a sync key's")
+	if kind != kindSync && (req.All || req.Group != "" || req.Secrets != nil || req.RequireTOTP || req.SelfService || len(req.Features) > 0 || req.Phones) {
+		return nil, bad("group, secrets, require_totp, self_service, features and phones are a sync key's")
 	}
 	feats, err := checkKeyFeatures(req.Features)
 	if err != nil {
@@ -163,7 +165,7 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 	raw := secret.Random(24)
 	tok := tokenPrefixes[kind] + raw
 	t := Token{ID: raw[:8], Name: req.Name, Hash: hashToken(tok), Created: s.now().Format(time.RFC3339), Scope: req.Scope,
-		NoSecrets: req.Secrets != nil && !*req.Secrets, RequireTOTP: req.RequireTOTP, SelfService: req.SelfService, Features: feats}
+		NoSecrets: req.Secrets != nil && !*req.Secrets, RequireTOTP: req.RequireTOTP, SelfService: req.SelfService, Features: feats, Phones: req.Phones}
 	err = s.update(func(st *State) error {
 		l := tokenList(st, kind)
 		*l = append(*l, t)
@@ -187,6 +189,7 @@ func (s *Server) makeToken(r *http.Request, kind string) (any, error) {
 		}
 		secrets := !t.NoSecrets
 		o.Group, o.All, o.Secrets, o.RequireTOTP, o.SelfService, o.Features = req.Group, req.All, &secrets, t.RequireTOTP, t.SelfService, t.Features
+		o.Phones = t.Phones
 	}
 	if kind == kindMCP {
 		o.Token = tok

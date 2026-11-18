@@ -9,9 +9,20 @@ const fail = (e) => toast(e.message, 8000);
 const enc = encodeURIComponent;
 
 function Members({ users, value, onChange }) {
+  const [q, setQ] = useState("");
   if (!users.length) return html`<p class="muted small">${t("groups.nousers")}</p>`;
-  return html`<fieldset class="hn-g"><legend>${t("groups.members")}</legend><div>
-    ${users.map((u) => html`<label class="check"><input type="checkbox" checked=${value.includes(u.name)}
+  const f = q.trim().toLowerCase();
+  const shown = f ? users.filter((u) => u.name.toLowerCase().includes(f) || (u.display_name || "").toLowerCase().includes(f)) : users;
+  const names = shown.map((u) => u.name);
+  const all = () => onChange((cur) => [...cur, ...names.filter((n) => !cur.includes(n))]);
+  const none = () => onChange((cur) => cur.filter((n) => !names.includes(n)));
+  return html`<fieldset class="hn-g"><legend>${t("groups.members")} (${value.filter((n) => users.some((u) => u.name === n)).length}/${users.length})</legend>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input type="search" placeholder=${t("groups.filter")} value=${q} onInput=${(e) => setQ(e.target.value)} style="flex:1;min-width:8em" />
+      <button type="button" class="btn" onClick=${all}>${f ? t("groups.allshown") : t("groups.all")}</button>
+      <button type="button" class="btn" onClick=${none}>${f ? t("groups.noneshown") : t("groups.none")}</button>
+    </div><div class="mgrid">
+    ${shown.map((u) => html`<label class="check"><input type="checkbox" checked=${value.includes(u.name)}
       onChange=${(e) => { const on = e.target.checked; onChange((cur) => (on ? [...cur, u.name] : cur.filter((x) => x !== u.name))); }} /> ${u.name}${u.display_name && u.display_name !== u.name ? html` <span class="muted">(${u.display_name})</span>` : ""}</label>`)}</div></fieldset>`;
 }
 

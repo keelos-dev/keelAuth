@@ -35,7 +35,11 @@ type keyFile struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: phonesim enrol|login -key FILE -url URL [-name NAME]")
+		fail("usage: phonesim enrol|login -key FILE -url URL [-name NAME]\n       phonesim rp -key FILE -aud HOST -c ID -n NONCE")
+	}
+	if os.Args[1] == "rp" {
+		rp(os.Args[2:])
+		return
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	keyPath := fs.String("key", "phone.json", "the phone's key file")
@@ -96,6 +100,36 @@ func main() {
 	default:
 		fail("enrol or login")
 	}
+}
+
+// rp approves a login at another system (docs/04 §8): it signs phone.RPMessage for the
+// system's host name and challenge and prints what the phone would send there, as JSON
+// ({"o", "device", "sig"}). It posts nothing: every system has its own call for this.
+func rp(args []string) {
+	fs := flag.NewFlagSet("rp", flag.ExitOnError)
+	keyPath := fs.String("key", "phone.json", "the phone's key file")
+	aud := fs.String("aud", "", "the system's host name (what it checks the signature with)")
+	id := fs.String("c", "", "the system's challenge id")
+	nonce := fs.String("n", "", "the challenge's nonce")
+	fs.Parse(args)
+	b, err := os.ReadFile(*keyPath)
+	if err != nil {
+		fail(err.Error())
+	}
+	var kf keyFile
+	if err := json.Unmarshal(b, &kf); err != nil {
+		fail(err.Error())
+	}
+	k, err := x509.ParsePKCS8PrivateKey(kf.Key)
+	if err != nil {
+		fail(err.Error())
+	}
+	msg := phone.RPMessage(kf.Origin, *aud, *id, *nonce)
+	if msg == "" {
+		fail("rp: -aud, -c and -n are needed (no line breaks)")
+	}
+	out, _ := json.Marshal(map[string]string{"o": kf.Origin, "device": kf.Device, "sig": phone.Sign(k.(*ecdsa.PrivateKey), msg)})
+	fmt.Println(string(out))
 }
 
 func post(to string, body map[string]string) map[string]any {

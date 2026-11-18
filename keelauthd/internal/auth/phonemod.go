@@ -22,7 +22,8 @@ type phoneStore struct{ s *Server }
 func (p phoneStore) Devices() []phone.Device { return slices.Clone(p.s.State().Phones) }
 
 func (p phoneStore) Add(d phone.Device) error {
-	return p.s.update(func(st *State) error { st.Phones = append(st.Phones, d); return nil }, false)
+	// the revision goes up: sync keys made with phones carry the public keys (sync.go)
+	return p.s.update(func(st *State) error { st.Phones = append(st.Phones, d); return nil }, true)
 }
 
 func (p phoneStore) Remove(id string) error {
@@ -33,7 +34,27 @@ func (p phoneStore) Remove(id string) error {
 		}
 		st.Phones = n
 		return nil
-	}, false)
+	}, true)
+}
+
+// dropPhones removes every phone of a person: an administrator reset their password or took
+// their authenticator away (the account may be in the wrong hands; docs/04 §8.3), or the
+// account is gone. The phones have to be enrolled again. why is for the log.
+func (s *Server) dropPhones(user, why string) {
+	n := 0
+	err := s.update(func(st *State) error {
+		before := len(st.Phones)
+		st.Phones = slices.DeleteFunc(st.Phones, func(d phone.Device) bool { return d.User == user })
+		n = before - len(st.Phones)
+		return nil
+	}, true)
+	if err != nil {
+		s.Log.Printf("phones of %s: %v", user, err)
+		return
+	}
+	if n > 0 {
+		s.Log.Printf("phones: %d of %s removed (%s)", n, user, why)
+	}
 }
 
 func (p phoneStore) Touch(id, when string) error {

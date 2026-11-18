@@ -127,3 +127,45 @@ func TestEnrolAndLogin(t *testing.T) {
 
 func msgHash(msg string) []byte { h := sha256.Sum256([]byte(msg)); return h[:] }
 func b64(b []byte) string       { return base64.RawURLEncoding.EncodeToString(b) }
+
+// TestRPMessage: what a phone signs for another system names that system: the signature is
+// good there only, and never as a login at keelauthd itself.
+func TestRPMessage(t *testing.T) {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key := EncodeKey(&priv.PublicKey)
+	const origin = "https://192.0.2.5:8443"
+	msg := RPMessage(origin, "mail.example.com", "id1", "nonce1")
+	if msg != "keelauth-rp\n"+origin+"\nmail.example.com\nid1\nnonce1" {
+		t.Fatalf("message %q", msg)
+	}
+	sig := Sign(priv, msg)
+	if err := Verify(key, msg, sig); err != nil {
+		t.Fatal(err)
+	}
+	for name, other := range map[string]string{
+		"another system":    RPMessage(origin, "files.example.com", "id1", "nonce1"),
+		"another challenge": RPMessage(origin, "mail.example.com", "id2", "nonce1"),
+		"another keelauthd": RPMessage("https://192.0.2.6:8443", "mail.example.com", "id1", "nonce1"),
+		"keelauthd's login": "keelauth-login\n" + origin + "\nid1\nnonce1",
+	} {
+		if Verify(key, other, sig) == nil {
+			t.Errorf("%s: the signature passed", name)
+		}
+	}
+	// a field with a line break would let one field pass for two
+	for _, f := range [][4]string{{origin, "mail.example.com\nid1", "x", "nonce1"}, {origin, "", "id1", "nonce1"}, {origin, "mail.example.com", "id1", "n\r"}} {
+		if m := RPMessage(f[0], f[1], f[2], f[3]); m != "" {
+			t.Errorf("RPMessage%q = %q", f, m)
+		}
+	}
+	if Verify(key, "", Sign(priv, "")) == nil {
+		t.Error("an empty message verified")
+	}
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if Verify(EncodeKey(&other.PublicKey), msg, sig) == nil {
+		t.Error("another phone's key verified")
+	}
+	if Verify("AAAA", msg, sig) == nil {
+		t.Error("a bad key verified")
+	}
+}

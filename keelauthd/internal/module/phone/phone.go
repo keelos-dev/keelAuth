@@ -12,6 +12,11 @@
 // own poll key (never in the QR code) and gets the user when approved (Take).
 // Keys: base64url of the 65-byte uncompressed point (0x04 X Y); signatures: base64url of
 // r||s (64 bytes) or of the ASN.1 DER form.
+//
+// Another system (docs/04 §8): a system that keelauthd's login page cannot serve (a mail
+// server on the Internet) gets the phones' public keys with the account sync, makes its own
+// challenge and checks the phone's signature itself, over RPMessage: it names the system, so
+// a signature made for one system is no good at another, nor at keelauthd's own login.
 package phone
 
 import (
@@ -23,6 +28,7 @@ import (
 	"errors"
 	"math/big"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -287,6 +293,36 @@ func verify(pub *ecdsa.PublicKey, msg, sig string) bool {
 		return ecdsa.Verify(pub, h[:], new(big.Int).SetBytes(b[:32]), new(big.Int).SetBytes(b[32:]))
 	}
 	return ecdsa.VerifyASN1(pub, h[:], b)
+}
+
+// RPMessage is what a phone signs to approve a login at another system (a relying party):
+// origin is the keelauthd the phone is enrolled at (the sync says it: phone_origin), aud the
+// system's own host name (it puts in its own, never one the phone sent), id and nonce the
+// system's challenge. No field may hold a line break (Verify's caller checks its own id and
+// nonce; RPMessage refuses the rest by returning "").
+func RPMessage(origin, aud, id, nonce string) string {
+	for _, f := range []string{origin, aud, id, nonce} {
+		if f == "" || strings.ContainsAny(f, "\r\n") {
+			return ""
+		}
+	}
+	return "keelauth-rp\n" + origin + "\n" + aud + "\n" + id + "\n" + nonce
+}
+
+// Verify checks a phone's signature over msg with its public key as the sync gives it
+// (Device.Key): what another system does with RPMessage. An empty msg never verifies.
+func Verify(key, msg, sig string) error {
+	if msg == "" {
+		return errors.New("nothing to verify")
+	}
+	pub, err := parseKey(key)
+	if err != nil {
+		return err
+	}
+	if !verify(pub, msg, sig) {
+		return errors.New("bad signature")
+	}
+	return nil
 }
 
 // EncodeKey is the wire form of a public key (tests, the app's reference).

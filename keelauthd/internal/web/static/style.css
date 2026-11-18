@@ -816,3 +816,8 @@ fieldset.feat table.feat-rows button { white-space: nowrap; }
 .badge.open { border-color: var(--warn); color: var(--warn); }
 select.svc-all { border-color: var(--warn); }
 ul.svc-list { margin: 0 0 4px; padding-left: 18px; }
+
+/* the AD import dialog (app/adimport.js): a name keelAuth refuses */
+dialog.form-dialog input.bad { border-color: var(--danger); color: var(--danger); }
+dialog.form-dialog.wide .table-wrap.tall { max-height: calc(100dvh - 330px); overflow: auto; }
+dialog.form-dialog.wide th.adimp-note { min-width: 240px; }

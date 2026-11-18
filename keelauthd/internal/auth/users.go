@@ -292,44 +292,57 @@ func (s *Server) setUserGroups(name string, groups []string) error {
 	return nil
 }
 
+// newUser is what an account is made from (POST /v1/users, and the AD import: adimport.go).
+type newUser struct {
+	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name"`
+	Mail        string   `json:"mail"`
+	Password    string   `json:"password"`
+	MustChange  *bool    `json:"must_change"`
+	Groups      []string `json:"groups"`
+	// Access: the account's own list of services, before services had groups
+	// (access.go): taken and not kept, so an older caller is not refused.
+	Access      *[]string                  `json:"access"`
+	MailDomains []string                   `json:"mail_domains"`
+	Features    map[string]json.RawMessage `json:"features"`
+}
+
 func (s *Server) postUser(r *http.Request) (any, error) {
-	var req struct {
-		Name        string   `json:"name"`
-		DisplayName string   `json:"display_name"`
-		Mail        string   `json:"mail"`
-		Password    string   `json:"password"`
-		MustChange  *bool    `json:"must_change"`
-		Groups      []string `json:"groups"`
-		// Access: the account's own list of services, before services had groups
-		// (access.go): taken and not kept, so an older caller is not refused.
-		Access      *[]string                  `json:"access"`
-		MailDomains []string                   `json:"mail_domains"`
-		Features    map[string]json.RawMessage `json:"features"`
-	}
+	var req newUser
 	if err := decode(r, &req); err != nil {
 		return nil, err
 	}
-	if err := s.checkMailDomains(req.MailDomains); err != nil {
+	o, err := s.makeUser(req)
+	if err != nil {
 		return nil, err
+	}
+	return o, nil
+}
+
+// makeUser checks req and makes the account; the password keelauthd made (none given) is in
+// the answer's Password.
+func (s *Server) makeUser(req newUser) (UserOut, error) {
+	if err := s.checkMailDomains(req.MailDomains); err != nil {
+		return UserOut{}, err
 	}
 	switch {
 	case !ValidUserName(req.Name):
-		return nil, bad("user name %q: lower-case letters, digits, -, _ and dots (not first, not last, not two in a row), a letter first, at most 32", req.Name)
+		return UserOut{}, bad("user name %q: lower-case letters, digits, -, _ and dots (not first, not last, not two in a row), a letter first, at most 32", req.Name)
 	case reserved(req.Name):
-		return nil, conflict("the name %q is reserved", req.Name)
+		return UserOut{}, conflict("the name %q is reserved", req.Name)
 	case !validMail(req.Mail):
-		return nil, bad("mail %q is not an address", req.Mail)
+		return UserOut{}, bad("mail %q is not an address", req.Mail)
 	}
 	if err := s.checkGroups(req.Groups); err != nil {
-		return nil, err
+		return UserOut{}, err
 	}
 	for n, raw := range req.Features { // checked before the account is made: no half-made accounts
 		f := findFeature(n)
 		if f == nil || !s.moduleOn(n) {
-			return nil, bad("no feature module %q that is on", n)
+			return UserOut{}, bad("no feature module %q that is on", n)
 		}
 		if _, err := s.normalizeFeature(f, req.Name, raw); err != nil {
-			return nil, bad("%v", err)
+			return UserOut{}, bad("%v", err)
 		}
 	}
 	display := req.DisplayName
@@ -348,36 +361,36 @@ func (s *Server) postUser(r *http.Request) (any, error) {
 	}
 	if _, err := s.Eng.CreateUser(req.Name, display, req.Mail); err != nil {
 		if errors.Is(err, engine.ErrExists) {
-			return nil, conflict("the name %q is taken (a user or a group)", req.Name)
+			return UserOut{}, conflict("the name %q is taken (a user or a group)", req.Name)
 		}
-		return nil, err
+		return UserOut{}, err
 	}
 	// a refused password undoes the user: nobody wants a half-made account
 	if err := s.setPassword(req.Name, pw, must); err != nil {
 		s.Eng.DeleteUser(req.Name)
 		s.update(func(st *State) error { delete(st.Users, req.Name); return nil }, false)
-		return nil, err
+		return UserOut{}, err
 	}
 	if len(req.MailDomains) > 0 {
 		if err := s.update(func(st *State) error {
 			st.user(req.Name).MailDomains = cleanList(req.MailDomains)
 			return nil
 		}, true); err != nil {
-			return nil, err
+			return UserOut{}, err
 		}
 	}
 	if len(req.Groups) > 0 {
 		if err := s.setUserGroups(req.Name, req.Groups); err != nil {
-			return nil, err
+			return UserOut{}, err
 		}
 		s.radiusLater()
 	}
 	if err := s.setFeatures(req.Name, req.Features, nil); err != nil {
-		return nil, err
+		return UserOut{}, err
 	}
 	u, err := s.lookupUser(req.Name)
 	if err != nil {
-		return nil, err
+		return UserOut{}, err
 	}
 	o := s.userOut(u)
 	o.Password = made
@@ -539,4 +552,46 @@ func (s *Server) deleteUser(r *http.Request) (any, error) {
 	s.dropPhones(name, "account deleted")
 	s.radiusLater()
 	return map[string]any{}, nil
+}
+
+// postInitialPasswords gives the named accounts a new initial password and returns them, for the
+// one table an administrator hands out (docs/07 section 1: the table of an import was not kept).
+// Only accounts still waiting on their first change take one: whoever has set a password of
+// their own is skipped, so a wide tick cannot lock working people out.
+func (s *Server) postInitialPasswords(r *http.Request) (any, error) {
+	var req struct {
+		Names []string `json:"names"`
+	}
+	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	if len(req.Names) > 50 {
+		return nil, bad("at most 50 accounts in one request")
+	}
+	type made struct {
+		Name        string   `json:"name"`
+		DisplayName string   `json:"display_name"`
+		Mail        string   `json:"mail,omitempty"`
+		Addresses   []string `json:"addresses,omitempty"`
+		Password    string   `json:"password"`
+	}
+	out := struct {
+		Made    []made   `json:"made"`
+		Skipped []string `json:"skipped"`
+	}{Made: []made{}, Skipped: []string{}}
+	for _, name := range req.Names {
+		u, err := s.lookupUser(name)
+		if err != nil || !s.mustChange(name) {
+			out.Skipped = append(out.Skipped, name)
+			continue
+		}
+		pw := secret.Password()
+		if err := s.setPassword(name, pw, true); err != nil {
+			return nil, err
+		}
+		s.dropPhones(name, "initial password remade by "+caller(r).Name)
+		o := s.userOut(u)
+		out.Made = append(out.Made, made{Name: o.Name, DisplayName: o.DisplayName, Mail: o.Mail, Addresses: o.Addresses, Password: pw})
+	}
+	return out, nil
 }

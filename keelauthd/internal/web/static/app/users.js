@@ -6,6 +6,8 @@ import { fmtTime, pwRules, t } from "./i18n.js";
 import { ask, Dialog, FormDialog, Spinner, toast } from "./ui.js";
 import { Phones } from "./phones.js";
 import { Totp } from "./totp.js";
+import { ADImport } from "./adimport.js";
+import { InitialPasswords } from "./initialpw.js";
 import { featCell, featOptions, FeatureFields, featText, optTitle } from "./features.js";
 
 // usePwPolicy: the password rules in force (status.password_policy), for hints and minlength.
@@ -179,7 +181,9 @@ export function Users() {
   });
   const filtering = !!text || cols.some((c) => pick[c.key]);
   return html`<div class="card"><div class="row-head"><h3>${t("nav.users")} <span class="muted small">${filtering ? shown.length + " / " + us.length : us.length}</span></h3>
-      <button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("users.new")}</button></div>
+      <div class="actions">${us.some((u) => u.must_change) && html`<button class="btn" onClick=${() => setDlg({ kind: "remake" })}>${t("users.remake")}</button>`}
+        <button class="btn" onClick=${() => setDlg({ kind: "adimport" })}>${t("users.adimport")}</button>
+        <button class="primary" onClick=${() => setDlg({ kind: "new" })}>${t("users.new")}</button></div></div>
     ${us.length > 0 && html`<div class="aud-bar"><input type="search" placeholder=${t("users.search")} value=${q} onInput=${(e) => setQ(e.target.value)} />
       ${cols.filter((c) => c.fd.type === "choice").map((c) => html`<label>${featText(c.fd.title)}
         <select value=${pick[c.key] || ""} onChange=${(e) => setPick((p) => ({ ...p, [c.key]: e.target.value }))}>
@@ -200,6 +204,8 @@ export function Users() {
     <p class="muted small">${t("users.note")}</p>
     ${dlg && dlg.kind === "new" && html`<${NewUser} groups=${groups} consumers=${consumers} domains=${domains} features=${features} onClose=${close}
       onDone=${(u) => { load(); setTimeout(() => setDlg(u.password ? { kind: "shown", user: u, pw: u.password } : null)); }} />`}
+    ${dlg && dlg.kind === "remake" && html`<${InitialPasswords} users=${us} onClose=${close} onChanged=${load} />`}
+    ${dlg && dlg.kind === "adimport" && html`<${ADImport} onClose=${close} onChanged=${load} />`}
     ${dlg && dlg.kind === "edit" && html`<${EditUser} user=${dlg.user} groups=${groups} consumers=${consumers} domains=${domains} features=${features} onClose=${close} onDone=${load} />`}
     ${dlg && dlg.kind === "reset" && html`<${ResetPassword} user=${dlg.user} onClose=${close}
       onDone=${(pw) => { load(); setTimeout(() => setDlg(pw ? { kind: "shown", user: dlg.user, pw } : null)); if (!pw) toast(t("users.pwset")); }} />`}

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"keelauth/internal/adimport"
 	"keelauth/internal/engine"
 	"keelauth/internal/module/oidc"
 	"keelauth/internal/secret"
@@ -75,9 +77,13 @@ type Server struct {
 	modClosers map[string]io.Closer
 	phoneSvc   *phone.Service // the phone module (phonemod.go), made on first use
 	sessions   *sessions
-	backupMu   sync.Mutex
-	hOnce      sync.Once
-	h          http.Handler
+	// ADRead reads another directory for the AD import (adimport.go); nil: the real one. Tests set it.
+	ADRead   func(ctx context.Context, address, user, password, pin string) (*adimport.Directory, string, error)
+	adMu     sync.Mutex
+	adReads  map[string]*adRead
+	backupMu sync.Mutex
+	hOnce    sync.Once
+	h        http.Handler
 }
 
 func osMode(p uint32) os.FileMode { return os.FileMode(p) }
